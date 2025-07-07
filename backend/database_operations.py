@@ -10,13 +10,35 @@ def get_db_connection():
     Establece y retorna una conexión a la base de datos PostgreSQL en Supabase.
     Las credenciales se obtienen de variables de entorno.
     """
+    db_host = os.environ.get("DB_HOST")
+    db_name = os.environ.get("DB_NAME")
+    db_user = os.environ.get("DB_USER")
+    db_password = os.environ.get("DB_PASSWORD")
+    db_port = os.environ.get("DB_PORT", "5432")
+
+    # --- INICIO DE DEPURACIÓN ---
+    print("\n--- Verificando variables de entorno para la DB ---")
+    print(f"DB_HOST: {db_host}")
+    print(f"DB_NAME: {db_name}")
+    print(f"DB_USER: {db_user}")
+    print(f"DB_PASSWORD: {'*' * len(db_password) if db_password else 'None'}") # Ocultar contraseña por seguridad
+    print(f"DB_PORT: {db_port}")
+    print("---------------------------------------------------\n")
+    # --- FIN DE DEPURACIÓN ---
+
+    if not all([db_host, db_name, db_user, db_password]):
+        print("ADVERTENCIA: Una o más variables de entorno de la base de datos no están configuradas.")
+        print("Intentando conectar a localhost como fallback (esto causará un error si no hay una DB local).")
+        # Si las variables no están, psycopg2 intentará localhost por defecto.
+        # No retornamos None aquí para que el error de conexión se propague y sea visible.
+
     try:
         conn = psycopg2.connect(
-            host=os.environ.get("zugpocccdmbfcnlqaxju.supabase.co"),
-            database=os.environ.get("postgres"),
-            user=os.environ.get("postgres"),
-            password=os.environ.get("|A058{S04t"),
-            port=os.environ.get("DB_PORT", "5432") # El puerto por defecto para PostgreSQL es 5432
+            host=db_host,
+            database=db_name,
+            user=db_user,
+            password=db_password,
+            port=db_port
         )
         return conn
     except Error as e:
