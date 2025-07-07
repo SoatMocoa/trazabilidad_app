@@ -34,6 +34,7 @@ def get_db_connection():
         # No retornamos None aquí para que el error de conexión se propague y sea visible.
 
     try:
+        print("DEBUG: Intentando establecer conexión con PostgreSQL...") # Nuevo print
         start_time = time.time() # Iniciar el temporizador
         conn = psycopg2.connect(
             host=db_host,
@@ -47,6 +48,7 @@ def get_db_connection():
         return conn
     except Error as e:
         print(f"Error al conectar a la base de datos PostgreSQL: {e}")
+        print("DEBUG: La función get_db_connection retornó None debido a un error.") # Nuevo print
         return None
 
 # --- Operaciones de la Base de Datos ---
@@ -56,8 +58,10 @@ def crear_tablas():
     Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' en la base de datos
     si no existen. También inserta usuarios por defecto.
     """
+    print("DEBUG: Llamando a get_db_connection para crear tablas.") # Nuevo print
     conn = get_db_connection()
     if conn:
+        print("DEBUG: Conexión obtenida exitosamente en crear_tablas. Procediendo a crear/verificar tablas.") # Nuevo print
         try:
             cursor = conn.cursor()
             start_time = time.time() # Iniciar temporizador para crear_tablas
@@ -129,6 +133,8 @@ def crear_tablas():
         finally:
             if conn:
                 conn.close()
+    else:
+        print("ADVERTENCIA: No se pudo obtener una conexión a la base de datos en crear_tablas. Las tablas no se crearon/verificaron.") # Nuevo print
 
 def obtener_credenciales_usuario(username):
     """
@@ -590,4 +596,3 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
 
 # Alias para la función de estadísticas para mantener la compatibilidad con el frontend
 obtener_conteo_facturas_pendientes_por_legalizador_y_eps = obtener_conteo_facturas_por_legalizador_y_eps
-
