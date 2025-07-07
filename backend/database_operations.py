@@ -2,6 +2,7 @@ import os
 import psycopg2 # Importar la librería para PostgreSQL
 from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
 from datetime import datetime # Necesario para guardar_factura_reemplazo
+import time # Importar la librería time para depuración de tiempos
 
 # --- Funciones de Conexión a la Base de Datos ---
 
@@ -33,6 +34,7 @@ def get_db_connection():
         # No retornamos None aquí para que el error de conexión se propague y sea visible.
 
     try:
+        start_time = time.time() # Iniciar el temporizador
         conn = psycopg2.connect(
             host=db_host,
             database=db_name,
@@ -40,6 +42,8 @@ def get_db_connection():
             password=db_password,
             port=db_port
         )
+        end_time = time.time() # Finalizar el temporizador
+        print(f"DEBUG: Conexión a la DB establecida en {end_time - start_time:.4f} segundos.")
         return conn
     except Error as e:
         print(f"Error al conectar a la base de datos PostgreSQL: {e}")
@@ -56,6 +60,7 @@ def crear_tablas():
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time() # Iniciar temporizador para crear_tablas
 
             # Tabla de Usuarios
             cursor.execute("""
@@ -115,7 +120,8 @@ def crear_tablas():
             """)
 
             conn.commit()
-            print("Tablas verificadas/creadas y usuarios por defecto insertados.")
+            end_time = time.time() # Finalizar temporizador
+            print(f"DEBUG: Tablas verificadas/creadas en {end_time - start_time:.4f} segundos.")
         except Error as e:
             print(f"Error al crear tablas o insertar usuarios: {e}")
             if conn:
@@ -133,8 +139,11 @@ def obtener_credenciales_usuario(username):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("SELECT password, role FROM usuarios WHERE username = %s;", (username,))
             user_data = cursor.fetchone()
+            end_time = time.time()
+            print(f"DEBUG: Obtener credenciales de usuario en {end_time - start_time:.4f} segundos.")
             return user_data
         except Error as e:
             print(f"Error al obtener credenciales del usuario: {e}")
@@ -153,6 +162,7 @@ def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_serv
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             # Verificar si el número de factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
             if cursor.fetchone():
@@ -165,6 +175,8 @@ def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_serv
             """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
             factura_id = cursor.fetchone()[0]
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar factura en {end_time - start_time:.4f} segundos.")
             return factura_id
         except Error as e:
             print(f"Error al guardar factura: {e}")
@@ -185,6 +197,7 @@ def insertar_factura_bulk(numero_factura, area_servicio, facturador, fecha_gener
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             # Verificar si el número de factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
             if cursor.fetchone():
@@ -196,6 +209,8 @@ def insertar_factura_bulk(numero_factura, area_servicio, facturador, fecha_gener
             """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
             factura_id = cursor.fetchone()[0]
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Insertar factura bulk en {end_time - start_time:.4f} segundos.")
             return factura_id
         except Error as e:
             print(f"Error al insertar factura en bulk: {e}")
@@ -215,11 +230,14 @@ def guardar_detalles_soat(factura_id, fecha_generacion_soat):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
                 VALUES (%s, %s);
             """, (factura_id, fecha_generacion_soat))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar detalles SOAT en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al guardar detalles SOAT: {e}")
@@ -239,11 +257,14 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
                 VALUES (%s, %s);
             """, (factura_id, fecha_generacion_soat))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Insertar detalles SOAT bulk en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al insertar detalles SOAT en bulk: {e}")
@@ -264,6 +285,7 @@ def obtener_factura_por_id(factura_id):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 SELECT
                     f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
@@ -282,6 +304,8 @@ def obtener_factura_por_id(factura_id):
                     f.id = %s;
             """, (factura_id,))
             factura_data = cursor.fetchone()
+            end_time = time.time()
+            print(f"DEBUG: Obtener factura por ID en {end_time - start_time:.4f} segundos.")
             return factura_data
         except Error as e:
             print(f"Error al obtener factura por ID: {e}")
@@ -303,6 +327,7 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             # Verificar si el nuevo numero_factura ya existe para otra factura (evitar duplicados)
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
             if cursor.fetchone():
@@ -335,6 +360,8 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
                   reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo,
                   factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar factura en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar factura: {e}")
@@ -354,6 +381,7 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 UPDATE facturas SET
                     estado_auditoria = %s,
@@ -362,6 +390,8 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
                 WHERE id = %s;
             """, (nuevo_estado_auditoria, observacion, tipo_error, factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar estado auditoria en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar estado de auditoria: {e}")
@@ -381,12 +411,15 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 UPDATE facturas SET
                     fecha_entrega_radicador = %s
                 WHERE id = %s;
             """, (fecha_entrega, factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar fecha entrega radicador en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar fecha de entrega al radicador: {e}")
@@ -407,8 +440,11 @@ def eliminar_factura(factura_id):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("DELETE FROM facturas WHERE id = %s;", (factura_id,))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Eliminar factura en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al eliminar factura: {e}")
@@ -430,6 +466,7 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             # 1. Verificar si el nuevo numero_factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (new_numero_factura,))
             if cursor.fetchone():
@@ -455,6 +492,8 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
             """, (new_numero_factura, fecha_reemplazo, old_factura_id))
 
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar factura reemplazo en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al guardar factura de reemplazo: {e}")
@@ -476,6 +515,7 @@ def cargar_facturas(search_term=None, search_column=None):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             query = """
                 SELECT
                     f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
@@ -502,6 +542,8 @@ def cargar_facturas(search_term=None, search_column=None):
 
             cursor.execute(query, tuple(params))
             facturas = cursor.fetchall()
+            end_time = time.time()
+            print(f"DEBUG: Cargar facturas en {end_time - start_time:.4f} segundos.")
             return facturas
         except Error as e:
             print(f"Error al cargar facturas: {e}")
@@ -519,6 +561,7 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 SELECT
                     facturador,
@@ -534,6 +577,8 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
                     facturador, eps;
             """)
             stats = cursor.fetchall()
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas pendientes en {end_time - start_time:.4f} segundos.")
             return stats
         except Error as e:
             print(f"Error al obtener estadísticas de facturas pendientes: {e}")
