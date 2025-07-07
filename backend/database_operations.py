@@ -1,483 +1,526 @@
-import sqlite3
 import os
-from datetime import datetime
+import psycopg2 # Importar la librería para PostgreSQL
+from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
+from datetime import datetime # Necesario para guardar_factura_reemplazo
 
-# Database path
-DB_PATH = 'data/trazabilidad.db'
+# --- Funciones de Conexión a la Base de Datos ---
 
 def get_db_connection():
-    """Establece y retorna una conexión a la base de datos."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row # Permite acceder a las columnas por nombre
-    return conn
+    """
+    Establece y retorna una conexión a la base de datos PostgreSQL en Supabase.
+    Las credenciales se obtienen de variables de entorno.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=os.environ.get("zugpocccdmbfcnlqaxju.supabase.co"),
+            database=os.environ.get("postgres"),
+            user=os.environ.get("postgres"),
+            password=os.environ.get("|A058{S04t"),
+            port=os.environ.get("DB_PORT", "5432") # El puerto por defecto para PostgreSQL es 5432
+        )
+        return conn
+    except Error as e:
+        print(f"Error al conectar a la base de datos PostgreSQL: {e}")
+        return None
+
+# --- Operaciones de la Base de Datos ---
 
 def crear_tablas():
-    """Crea las tablas de la base de datos si no existen."""
+    """
+    Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' en la base de datos
+    si no existen. También inserta usuarios por defecto.
+    """
     conn = get_db_connection()
-    cursor = conn.cursor()
+    if conn:
+        try:
+            cursor = conn.cursor()
 
-    # Tabla de usuarios
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('legalizador', 'auditor'))
-        );
-    ''')
+            # Tabla de Usuarios
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL
+                );
+            """)
 
-    # Insertar usuarios por defecto si no existen
-    # Usamos INSERT OR IGNORE para evitar errores si los usuarios ya existen
-    cursor.execute("INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)",
-                   ('legalizador', 'legalizador123', 'legalizador'))
-    cursor.execute("INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)",
-                   ('auditor', 'auditor123', 'auditor'))
+            # Insertar usuarios por defecto si no existen
+            # ON CONFLICT DO NOTHING es específico de PostgreSQL
+            cursor.execute("""
+                INSERT INTO usuarios (username, password, role) VALUES ('legalizador', 'legalizador123', 'legalizador')
+                ON CONFLICT (username) DO NOTHING;
+            """)
+            cursor.execute("""
+                INSERT INTO usuarios (username, password, role) VALUES ('auditor', 'auditor123', 'auditor')
+                ON CONFLICT (username) DO NOTHING;
+            """)
 
+            # Tabla de Facturas
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS facturas (
+                    id SERIAL PRIMARY KEY,
+                    numero_factura TEXT NOT NULL UNIQUE,
+                    area_servicio TEXT,
+                    facturador TEXT,
+                    fecha_generacion TEXT,
+                    eps TEXT,
+                    fecha_hora_entrega TEXT,
+                    tiene_correccion BOOLEAN DEFAULT FALSE,
+                    descripcion_devolucion TEXT,
+                    fecha_devolucion_lider TEXT,
+                    revisado BOOLEAN DEFAULT FALSE,
+                    factura_original_id INTEGER,
+                    estado TEXT DEFAULT 'Activa', -- Activa, Anulada, Reemplazada
+                    reemplazada_por_numero_factura TEXT, -- Nuevo campo para el número de la factura que la reemplazó
+                    estado_auditoria TEXT DEFAULT 'Pendiente', -- Pendiente, Radicada OK, Devuelta por Auditor, Corregida por Legalizador
+                    observacion_auditor TEXT,
+                    tipo_error TEXT,
+                    fecha_reemplazo TEXT, -- Fecha en que la factura fue marcada como reemplazada
+                    fecha_entrega_radicador TEXT, -- Nueva columna para la fecha de entrega al radicador
+                    FOREIGN KEY (factura_original_id) REFERENCES facturas(id)
+                );
+            """)
 
-    # Tabla de facturas
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS facturas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero_factura TEXT UNIQUE NOT NULL,
-            area_servicio TEXT NOT NULL,
-            facturador TEXT NOT NULL,
-            fecha_generacion TEXT NOT NULL, --YYYY-MM-DD
-            eps TEXT NOT NULL,
-            fecha_hora_entrega TEXT, --YYYY-MM-DD HH:MM:SS
-            tiene_correccion INTEGER DEFAULT 0, -- 0 para no, 1 para si
-            descripcion_devolucion TEXT,
-            fecha_devolucion_lider TEXT,
-            revisado INTEGER DEFAULT 0,
-            factura_original_id INTEGER, -- FK to facturas.id for replacements
-            estado TEXT DEFAULT 'Activa' CHECK (estado IN ('Activa', 'Anulada', 'Reemplazada')),
-            reemplazada_por_numero_factura TEXT, -- Stores the new invoice number if this one was replaced
-            estado_auditoria TEXT DEFAULT 'Pendiente' CHECK (estado_auditoria IN ('Pendiente', 'Radicada OK', 'Devuelta por Auditor', 'Corregida por Legalizador')),
-            observacion_auditor TEXT,
-            tipo_error TEXT,
-            fecha_reemplazo TEXT, -- Fecha en la que la factura original fue reemplazada (YYYY-MM-DD)
-            fecha_entrega_radicador TEXT, -- Nueva columna para la fecha de entrega al radicador
-            FOREIGN KEY (factura_original_id) REFERENCES facturas(id)
-        );
-    ''')
+            # Tabla de Detalles SOAT
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS detalles_soat (
+                    id SERIAL PRIMARY KEY,
+                    factura_id INTEGER UNIQUE,
+                    fecha_generacion_soat TEXT,
+                    FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
+                );
+            """)
 
-    # Tabla para detalles SOAT
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS soat_detalles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            factura_id INTEGER UNIQUE NOT NULL,
-            fecha_generacion TEXT NOT NULL, -- Fecha de generación de la factura SOAT
-            FOREIGN KEY (factura_id) REFERENCES facturas(id)
-        );
-    ''')
-
-    conn.commit()
-    conn.close()
+            conn.commit()
+            print("Tablas verificadas/creadas y usuarios por defecto insertados.")
+        except Error as e:
+            print(f"Error al crear tablas o insertar usuarios: {e}")
+            if conn:
+                conn.rollback() # Revertir la transacción en caso de error
+        finally:
+            if conn:
+                conn.close()
 
 def obtener_credenciales_usuario(username):
     """
-    Obtiene la contraseña y el rol de un usuario dado su nombre de usuario.
-
-    Args:
-        username (str): El nombre de usuario a buscar.
-
-    Returns:
-        tuple: (password, role) si el usuario es encontrado, None en caso contrario.
+    Obtiene la contraseña y el rol de un usuario de la base de datos.
+    Retorna una tupla (password, role) o None si el usuario no existe.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT password, role FROM usuarios WHERE username = ?", (username,))
-    user_data = cursor.fetchone()
-    conn.close()
-    if user_data:
-        return user_data['password'], user_data['role'] # Accede por nombre de columna
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password, role FROM usuarios WHERE username = %s;", (username,))
+            user_data = cursor.fetchone()
+            return user_data
+        except Error as e:
+            print(f"Error al obtener credenciales del usuario: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
     return None
 
 def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_servicio, fecha_hora_entrega):
     """
     Guarda una nueva factura en la base de datos.
-    Retorna el ID de la nueva factura si es exitoso, None si el número de factura ya existe.
+    Retorna el ID de la factura insertada o None si ya existe.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
-        conn.commit()
-        return cursor.lastrowid # Retorna el ID de la fila recién insertada
-    except sqlite3.IntegrityError:
-        # Esto ocurre si numero_factura ya existe (UNIQUE constraint)
-        return None
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # Verificar si el número de factura ya existe
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
+            if cursor.fetchone():
+                print(f"Factura con número {numero_factura} ya existe. No se insertó.")
+                return None # Indicar que la factura ya existe
+
+            cursor.execute("""
+                INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
+            """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
+            factura_id = cursor.fetchone()[0]
+            conn.commit()
+            return factura_id
+        except Error as e:
+            print(f"Error al guardar factura: {e}")
+            if conn:
+                conn.rollback()
+            return None
+        finally:
+            if conn:
+                conn.close()
+    return None
 
 def insertar_factura_bulk(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega):
     """
-    Inserta una factura en la base de datos, utilizada para carga masiva.
-    Retorna el ID de la nueva factura o None si ya existe.
+    Inserta una factura en la base de datos para carga masiva.
+    Retorna el ID de la factura insertada o None si ya existe.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
-        conn.commit()
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        # Si el número de factura ya existe, no se inserta y se retorna None
-        return None
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # Verificar si el número de factura ya existe
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
+            if cursor.fetchone():
+                return None # Indicar que la factura ya existe
+
+            cursor.execute("""
+                INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
+            """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
+            factura_id = cursor.fetchone()[0]
+            conn.commit()
+            return factura_id
+        except Error as e:
+            print(f"Error al insertar factura en bulk: {e}")
+            if conn:
+                conn.rollback()
+            return None
+        finally:
+            if conn:
+                conn.close()
+    return None
 
 def guardar_detalles_soat(factura_id, fecha_generacion_soat):
     """
-    Guarda los detalles específicos de SOAT para una factura.
+    Guarda los detalles SOAT para una factura específica.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            INSERT INTO soat_detalles (factura_id, fecha_generacion)
-            VALUES (?, ?)
-        ''', (factura_id, fecha_generacion_soat))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        # Esto ocurriría si ya existe un detalle SOAT para esta factura_id (UNIQUE constraint)
-        print(f"Advertencia: Ya existe un detalle SOAT para la factura ID {factura_id}.")
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
+                VALUES (%s, %s);
+            """, (factura_id, fecha_generacion_soat))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al guardar detalles SOAT: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
 def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
     """
-    Inserta detalles SOAT para una factura, utilizada en carga masiva.
+    Inserta detalles SOAT en la base de datos para carga masiva.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            INSERT INTO soat_detalles (factura_id, fecha_generacion)
-            VALUES (?, ?)
-        ''', (factura_id, fecha_generacion_soat))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        # Esto ocurriría si ya existe un detalle SOAT para esta factura_id (UNIQUE constraint)
-        pass # Ignorar silenciosamente si ya existe en carga masiva
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
+                VALUES (%s, %s);
+            """, (factura_id, fecha_generacion_soat))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al insertar detalles SOAT en bulk: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
 def obtener_factura_por_id(factura_id):
     """
-    Obtiene los datos completos de una factura por su ID, incluyendo detalles de la factura original
-    si es una factura de reemplazo, y la fecha de entrega al radicador.
+    Obtiene los datos completos de una factura por su ID,
+    incluyendo información de la factura original si es un reemplazo.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT
-            f.id,
-            f.numero_factura,
-            f.area_servicio,
-            f.facturador,
-            f.fecha_generacion,
-            f.eps,
-            f.fecha_hora_entrega,
-            f.tiene_correccion,
-            f.descripcion_devolucion,
-            f.fecha_devolucion_lider,
-            f.revisado,
-            f.factura_original_id,
-            f.estado,
-            f.reemplazada_por_numero_factura,
-            f.estado_auditoria,
-            f.observacion_auditor,
-            f.tipo_error,
-            f.fecha_reemplazo,
-            fo.numero_factura AS num_fact_original_linked,
-            fo.fecha_generacion AS fecha_gen_original_linked,
-            f.fecha_entrega_radicador
-        FROM facturas f
-        LEFT JOIN facturas fo ON f.factura_original_id = fo.id
-        WHERE f.id = ?
-    ''', (factura_id,))
-    factura_data = cursor.fetchone()
-    conn.close()
-    return factura_data
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
+                    f.fecha_hora_entrega, f.tiene_correccion, f.descripcion_devolucion,
+                    f.fecha_devolucion_lider, f.revisado, f.factura_original_id, f.estado,
+                    f.reemplazada_por_numero_factura, f.estado_auditoria, f.observacion_auditor,
+                    f.tipo_error, f.fecha_reemplazo,
+                    fo.numero_factura AS num_fact_original_linked,
+                    fo.fecha_generacion AS fecha_gen_original_linked,
+                    f.fecha_entrega_radicador
+                FROM
+                    facturas f
+                LEFT JOIN
+                    facturas fo ON f.factura_original_id = fo.id
+                WHERE
+                    f.id = %s;
+            """, (factura_id,))
+            factura_data = cursor.fetchone()
+            return factura_data
+        except Error as e:
+            print(f"Error al obtener factura por ID: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+    return None
 
-def actualizar_factura(
-        factura_id, numero_factura, area_servicio, facturador,
-        fecha_generacion, eps, fecha_hora_entrega, tiene_correccion,
-        descripcion_devolucion, fecha_devolucion_lider, revisado,
-        factura_original_id, estado, reemplazada_por_numero_factura,
-        estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
+def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fecha_generacion, eps,
+                       fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                       fecha_devolucion_lider, revisado, factura_original_id, estado,
+                       reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
     """
     Actualiza una factura existente en la base de datos.
+    Retorna True si la actualización fue exitosa, False en caso contrario.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            UPDATE facturas SET
-                numero_factura = ?,
-                area_servicio = ?,
-                facturador = ?,
-                fecha_generacion = ?,
-                eps = ?,
-                fecha_hora_entrega = ?,
-                tiene_correccion = ?,
-                descripcion_devolucion = ?,
-                fecha_devolucion_lider = ?,
-                revisado = ?,
-                factura_original_id = ?,
-                estado = ?,
-                reemplazada_por_numero_factura = ?,
-                estado_auditoria = ?,
-                observacion_auditor = ?,
-                tipo_error = ?,
-                fecha_reemplazo = ?
-            WHERE id = ?
-        ''', (
-            numero_factura, area_servicio, facturador, fecha_generacion, eps,
-            fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
-            fecha_devolucion_lider, revisado, factura_original_id, estado,
-            reemplazada_por_numero_factura, estado_auditoria, observacion_auditor,
-            tipo_error, fecha_reemplazo, factura_id
-        ))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        # Esto ocurre si el nuevo numero_factura ya existe (UNIQUE constraint)
-        return False
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # Verificar si el nuevo numero_factura ya existe para otra factura (evitar duplicados)
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
+            if cursor.fetchone():
+                print(f"Error: El numero de factura '{numero_factura}' ya existe para otra factura.")
+                return False
 
-def actualizar_estado_auditoria_factura(factura_id, nuevo_estado, observacion_auditor, tipo_error):
-    """
-    Actualiza el estado de auditoría, la observación y el tipo de error de una factura.
-    """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            UPDATE facturas SET
-                estado_auditoria = ?,
-                observacion_auditor = ?,
-                tipo_error = ?
-            WHERE id = ?
-        ''', (nuevo_estado, observacion_auditor, tipo_error, factura_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Error al actualizar estado de auditoría: {e}")
-        return False
-    finally:
-        conn.close()
+            cursor.execute("""
+                UPDATE facturas SET
+                    numero_factura = %s,
+                    area_servicio = %s,
+                    facturador = %s,
+                    fecha_generacion = %s,
+                    eps = %s,
+                    fecha_hora_entrega = %s,
+                    tiene_correccion = %s,
+                    descripcion_devolucion = %s,
+                    fecha_devolucion_lider = %s,
+                    revisado = %s,
+                    factura_original_id = %s,
+                    estado = %s,
+                    reemplazada_por_numero_factura = %s,
+                    estado_auditoria = %s,
+                    observacion_auditor = %s,
+                    tipo_error = %s,
+                    fecha_reemplazo = %s
+                WHERE id = %s;
+            """, (numero_factura, area_servicio, facturador, fecha_generacion, eps,
+                  fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                  fecha_devolucion_lider, revisado, factura_original_id, estado,
+                  reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo,
+                  factura_id))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al actualizar factura: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
-def actualizar_fecha_entrega_radicador(factura_id, fecha_hora_entrega):
+def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion, tipo_error):
     """
-    Actualiza la fecha de entrega al radicador de una factura.
+    Actualiza el estado de auditoría, observación y tipo de error de una factura.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            UPDATE facturas SET
-                fecha_entrega_radicador = ?
-            WHERE id = ?
-        ''', (fecha_hora_entrega, factura_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Error al actualizar fecha de entrega al radicador: {e}")
-        return False
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE facturas SET
+                    estado_auditoria = %s,
+                    observacion_auditor = %s,
+                    tipo_error = %s
+                WHERE id = %s;
+            """, (nuevo_estado_auditoria, observacion, tipo_error, factura_id))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al actualizar estado de auditoria: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
+
+def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
+    """
+    Actualiza la fecha_entrega_radicador de una factura.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE facturas SET
+                    fecha_entrega_radicador = %s
+                WHERE id = %s;
+            """, (fecha_entrega, factura_id))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al actualizar fecha de entrega al radicador: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
 def eliminar_factura(factura_id):
     """
-    Elimina una factura y sus detalles SOAT asociados de la base de datos.
+    Elimina una factura de la base de datos.
+    Retorna True si la eliminación fue exitosa, False en caso contrario.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # Eliminar primero los detalles SOAT si existen
-        cursor.execute("DELETE FROM soat_detalles WHERE factura_id = ?", (factura_id,))
-        # Luego eliminar la factura
-        cursor.execute("DELETE FROM facturas WHERE id = ?", (factura_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Error al eliminar factura: {e}")
-        return False
-    finally:
-        conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM facturas WHERE id = %s;", (factura_id,))
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al eliminar factura: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
-def guardar_factura_reemplazo(factura_original_id, new_numero_factura, new_fecha_generacion,
-                             original_area_servicio, original_facturador, original_eps, fecha_reemplazo):
+def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
+                              area_servicio, facturador, eps, fecha_reemplazo):
     """
-    Crea una nueva factura de reemplazo y actualiza el estado de la factura original.
+    Guarda una nueva factura como reemplazo de una existente y actualiza la factura original.
+    Retorna True si la operación fue exitosa, False en caso contrario.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # 1. Marcar la factura original como 'Reemplazada' y guardar el nuevo número
-        cursor.execute('''
-            UPDATE facturas SET
-                estado = 'Reemplazada',
-                reemplazada_por_numero_factura = ?,
-                fecha_reemplazo = ?
-            WHERE id = ?
-        ''', (new_numero_factura, fecha_reemplazo, factura_original_id))
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # 1. Verificar si el nuevo numero_factura ya existe
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (new_numero_factura,))
+            if cursor.fetchone():
+                print(f"Error: El numero de factura de reemplazo '{new_numero_factura}' ya existe.")
+                return False
 
-        # 2. Insertar la nueva factura con el enlace a la original
-        cursor.execute('''
-            INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                                  fecha_hora_entrega, factura_original_id, estado_auditoria)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Pendiente')
-        ''', (new_numero_factura, original_area_servicio, original_facturador, new_fecha_generacion,
-              original_eps, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), factura_original_id))
+            # 2. Insertar la nueva factura de reemplazo
+            cursor.execute("""
+                INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
+                                      fecha_hora_entrega, factura_original_id, estado)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+            """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
+                  datetime.now().strftime('%Y-%m-%d %H:%M:%S'), old_factura_id, 'Activa')) # La nueva factura está 'Activa'
+            new_factura_id = cursor.fetchone()[0]
 
-        new_factura_id = cursor.lastrowid
+            # 3. Actualizar la factura original para marcarla como 'Reemplazada'
+            cursor.execute("""
+                UPDATE facturas SET
+                    estado = 'Reemplazada',
+                    reemplazada_por_numero_factura = %s,
+                    fecha_reemplazo = %s
+                WHERE id = %s;
+            """, (new_numero_factura, fecha_reemplazo, old_factura_id))
 
-        # Si el área de servicio es SOAT, guardar los detalles SOAT para la nueva factura
-        if original_area_servicio == "SOAT":
-            cursor.execute('''
-                INSERT INTO soat_detalles (factura_id, fecha_generacion)
-                VALUES (?, ?)
-            ''', (new_factura_id, new_fecha_generacion)) # Usar la fecha de generación de la nueva factura
-
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        # Si el nuevo_numero_factura ya existe
-        conn.rollback() # Revertir ambas operaciones
-        return False
-    except Exception as e:
-        conn.rollback()
-        print(f"Error al refacturar: {e}")
-        return False
-    finally:
-        conn.close()
-
+            conn.commit()
+            return True
+        except Error as e:
+            print(f"Error al guardar factura de reemplazo: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+    return False
 
 def cargar_facturas(search_term=None, search_column=None):
     """
-    Carga todas las facturas 'Activas', 'Devueltas por Auditor' o 'Corregidas por Legalizador'
-    de la base de datos, con la opción de filtrar por término y columna.
-    Realiza un JOIN para obtener el numero_factura y fecha_generacion de la factura original
+    Carga todas las facturas de la base de datos, con opción de filtro.
+    Incluye un JOIN para obtener el número y fecha de generación de la factura original
     cuando la factura actual es un reemplazo.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT
+                    f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
+                    f.fecha_hora_entrega, f.tiene_correccion, f.descripcion_devolucion,
+                    f.fecha_devolucion_lider, f.revisado, f.factura_original_id, f.estado,
+                    f.reemplazada_por_numero_factura, f.estado_auditoria, f.observacion_auditor,
+                    f.tipo_error, f.fecha_reemplazo,
+                    fo.numero_factura AS num_fact_original_linked,
+                    fo.fecha_generacion AS fecha_gen_original_linked,
+                    f.fecha_entrega_radicador
+                FROM
+                    facturas f
+                LEFT JOIN
+                    facturas fo ON f.factura_original_id = fo.id
+            """
+            params = []
+            if search_term and search_column:
+                # Usar ILIKE para búsqueda insensible a mayúsculas/minúsculas en PostgreSQL
+                query += f" WHERE {search_column} ILIKE %s"
+                params.append(f"%{search_term}%")
+            
+            # Ordenar por id descendente para ver las más recientes primero
+            query += " ORDER BY f.id DESC;"
 
-    # Base de la consulta SQL con JOIN para obtener la información de la factura original
-    sql_query = '''
-        SELECT
-            f.id,
-            f.numero_factura,
-            f.area_servicio,
-            f.facturador,
-            f.fecha_generacion,
-            f.eps,
-            f.fecha_hora_entrega,
-            f.tiene_correccion,
-            f.descripcion_devolucion,
-            f.fecha_devolucion_lider,
-            f.revisado,
-            f.factura_original_id,
-            f.estado,
-            f.reemplazada_por_numero_factura,
-            f.estado_auditoria,
-            f.observacion_auditor,
-            f.tipo_error,
-            f.fecha_reemplazo,
-            fo.numero_factura AS num_fact_original_linked,
-            fo.fecha_generacion AS fecha_gen_original_linked,
-            f.fecha_entrega_radicador
-        FROM facturas f
-        LEFT JOIN facturas fo ON f.factura_original_id = fo.id
-        WHERE f.estado IN ('Activa', 'Reemplazada') -- Mostrar activas y reemplazadas (incluyendo las originales reemplazadas)
-    '''
-    params = []
-
-    # Aplicar filtro si se proporciona un search_term y search_column
-    if search_term and search_column:
-        search_term_like = f'%{search_term}%'
-        if search_column == "numero_factura":
-            # Buscar en el número de factura actual O en el número de factura de reemplazo O en el número de la factura original
-            sql_query += '''
-                AND (f.numero_factura LIKE ? OR f.reemplazada_por_numero_factura LIKE ? OR fo.numero_factura LIKE ?)
-            '''
-            params.extend([search_term_like, search_term_like, search_term_like])
-        elif search_column == "facturador":
-            sql_query += ' AND f.facturador LIKE ?'
-            params.append(search_term_like)
-        elif search_column == "eps":
-            sql_query += ' AND f.eps LIKE ?'
-            params.append(search_term_like)
-        elif search_column == "area_servicio":
-            sql_query += ' AND f.area_servicio LIKE ?'
-            params.append(search_term_like)
-        elif search_column == "estado_auditoria":
-            sql_query += ' AND f.estado_auditoria LIKE ?'
-            params.append(search_term_like)
-
-    # Ordenar los resultados para que las facturas 'Devuelta por Auditor' y 'Corregida por Legalizador'
-    # aparezcan al principio, seguidas por el resto.
-    sql_query += '''
-        ORDER BY
-            CASE
-                WHEN f.estado_auditoria = 'Devuelta por Auditor' THEN 1
-                WHEN f.estado_auditoria = 'Corregida por Legalizador' THEN 2
-                ELSE 3
-            END,
-            f.fecha_generacion DESC, f.id DESC
-    '''
-
-    cursor.execute(sql_query, tuple(params))
-    facturas = cursor.fetchall()
-    conn.close()
-
-    # Convertir las filas a un formato de lista de tuplas para compatibilidad con la GUI
-    # y para mantener la coherencia del resultado con versiones anteriores.
-    # Accede a los campos por nombre (gracias a row_factory = sqlite3.Row)
-    result = []
-    for f in facturas:
-        result.append((
-            f['id'], f['numero_factura'], f['area_servicio'], f['facturador'],
-            f['fecha_generacion'], f['eps'], f['fecha_hora_entrega'],
-            f['tiene_correccion'], f['descripcion_devolucion'], f['fecha_devolucion_lider'],
-            f['revisado'], f['factura_original_id'], f['estado'],
-            f['reemplazada_por_numero_factura'], f['estado_auditoria'], f['observacion_auditor'],
-            f['tipo_error'], f['fecha_reemplazo'],
-            f['num_fact_original_linked'], f['fecha_gen_original_linked'], f['fecha_entrega_radicador']
-        ))
-    return result
+            cursor.execute(query, tuple(params))
+            facturas = cursor.fetchall()
+            return facturas
+        except Error as e:
+            print(f"Error al cargar facturas: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
 
 def obtener_conteo_facturas_por_legalizador_y_eps():
     """
-    Obtiene el conteo de facturas pendientes agrupadas por legalizador y EPS.
-    Se consideran facturas pendientes aquellas con estado 'Activa'
-    y estado_auditoria en 'Pendiente', 'Devuelta por Auditor', o 'Corregida por Legalizador'.
-
-    Returns:
-        list of tuples: Cada tupla contiene (facturador, eps, total_facturas_pendientes).
+    Obtiene el conteo de facturas pendientes por cada legalizador y EPS.
     """
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT
-            facturador,
-            eps,
-            COUNT(id) AS total_facturas_pendientes
-        FROM facturas
-        WHERE estado = 'Activa' AND estado_auditoria IN ('Pendiente', 'Devuelta por Auditor', 'Corregida por Legalizador')
-        GROUP BY facturador, eps
-        ORDER BY facturador ASC, eps ASC, total_facturas_pendientes DESC;
-    ''')
-    result = cursor.fetchall()
-    conn.close()
-    # Convertir a lista de tuplas (nombre, eps, cantidad) para el frontend
-    return [(row['facturador'], row['eps'], row['total_facturas_pendientes']) for row in result]
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    facturador,
+                    eps,
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria = 'Pendiente'
+                GROUP BY
+                    facturador, eps
+                ORDER BY
+                    facturador, eps;
+            """)
+            stats = cursor.fetchall()
+            return stats
+        except Error as e:
+            print(f"Error al obtener estadísticas de facturas pendientes: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
+
+# Alias para la función de estadísticas para mantener la compatibilidad con el frontend
+obtener_conteo_facturas_pendientes_por_legalizador_y_eps = obtener_conteo_facturas_por_legalizador_y_eps
+
