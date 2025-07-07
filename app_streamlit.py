@@ -3,10 +3,23 @@ from datetime import datetime, timedelta
 import pandas as pd
 import os
 
+# --- INICIO DE DEPURACIÓN DE SECRETS ---
+# Intenta acceder a los secretos directamente para verificar si secrets.toml se está leyendo.
+try:
+    db_host_from_secrets = st.secrets["DB_HOST"]
+    st.sidebar.write(f"DEBUG (Cloud): DB_HOST desde st.secrets: {db_host_from_secrets}")
+except KeyError as e:
+    st.sidebar.error(f"DEBUG (Cloud): Error al acceder a un secreto: {e}. Asegúrate de que .streamlit/secrets.toml esté configurado correctamente.")
+except Exception as e:
+    st.sidebar.error(f"DEBUG (Cloud): Error inesperado al leer secretos: {e}")
+# --- FIN DE DEPURACIÓN DE SECRETS ---
+
+
 # Configurar el diseño de la página para usar todo el ancho disponible
 st.set_page_config(layout="wide")
 
-# Asegúrate de que la carpeta 'data' exista
+# Asegúrate de que la carpeta 'data' exista (esto es más relevante para pruebas locales con SQLite,
+# pero se mantiene por si acaso en entornos de despliegue que lo requieran para otros fines).
 if not os.path.exists('data'):
     os.makedirs('data')
 
@@ -14,6 +27,7 @@ if not os.path.exists('data'):
 from backend import database_operations as db_ops
 
 # Crear las tablas de la base de datos si no existen
+# Esto también intentará la conexión a la DB y mostrará logs detallados.
 db_ops.crear_tablas()
 
 # --- Inicializar estado de sesión para el filtro y claves de widgets ---
@@ -23,7 +37,11 @@ if 'filter_text_key' not in st.session_state:
     st.session_state.filter_text_key = 0
 if 'filter_select_key' not in st.session_state:
     st.session_state.filter_select_key = 0
-# Eliminamos el "cache buster" ya que usaremos invalidación explícita.
+if 'dataframe_key' not in st.session_state: # Clave para el dataframe principal de facturas
+    st.session_state.dataframe_key = 0
+if 'stats_dataframe_key' not in st.session_state: # NUEVA clave para el dataframe de estadísticas
+    st.session_state.stats_dataframe_key = 0
+
 
 # --- Funciones para calcular días hábiles ---
 def sumar_dias_habiles(fecha_inicio_obj, num_dias_habiles):
@@ -294,14 +312,14 @@ def display_bulk_load_section():
                     st.info(f"Advertencia: Factura '{numero_factura_csv}' (Fila {index+2}) ya existe o hubo un error al insertar. Saltando.")
             
             st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
-            invalidate_facturas_cache() # Invalida la caché después de la carga masiva
             st.rerun()
 
 def display_statistics():
     stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps() # Llamada a la función actualizada
     if stats:
         df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"]) # Columnas actualizadas
-        st.dataframe(df_stats, use_container_width=True)
+        # Añadir la clave dinámica al st.dataframe de estadísticas
+        st.dataframe(df_stats, use_container_width=True, key=f"stats_table_{st.session_state.stats_dataframe_key}")
     else:
         st.info("No hay estadisticas disponibles de facturas pendientes.")
 
@@ -320,28 +338,12 @@ def highlight_rows(row):
             styles = ['background-color: lightgreen'] * len(row)
     return styles
 
-# Wrapper para la función de carga de facturas, con caché
-@st.cache_data(ttl=60) # Los datos se cachearán por 60 segundos
-def get_cached_facturas(search_term, search_column):
-    """
-    Función wrapper para cargar facturas desde la base de datos,
-    con un mecanismo de cache.
-    """
-    return db_ops.cargar_facturas(search_term, search_column)
-
-def invalidate_facturas_cache():
-    """
-    Fuerza la invalidación de la caché de la función get_cached_facturas.
-    """
-    get_cached_facturas.clear()
-
-
 def display_invoice_table(user_role):
     col_search, col_criteria = st.columns([3, 2])
     with col_search:
         search_term_input = st.text_input(
             "Buscar:",
-            value="", # El valor inicial se maneja por la recreación del widget
+            value="",
             key=f"search_input_widget_{st.session_state.filter_text_key}"
         )
     with col_criteria:
@@ -349,11 +351,10 @@ def display_invoice_table(user_role):
         search_criterion_selectbox = st.selectbox(
             "Buscar por:",
             options=options_criteria,
-            index=0, # El índice inicial se maneja por la recreación del widget (primera opción)
+            index=0,
             key=f"search_criteria_widget_{st.session_state.filter_select_key}"
         )
     
-    # Obtenemos los valores actuales de los widgets a través de sus claves
     current_search_term = st.session_state.get(f'search_input_widget_{st.session_state.filter_text_key}', '').strip()
     current_search_criterion = st.session_state.get(f'search_criteria_widget_{st.session_state.filter_select_key}', 'Numero de Factura')
 
@@ -365,8 +366,7 @@ def display_invoice_table(user_role):
         "Estado Auditoria": "estado_auditoria"
     }.get(current_search_criterion)
 
-    # Llamar a la función cacheada
-    facturas_raw = get_cached_facturas(
+    facturas_raw = db_ops.cargar_facturas(
         search_term=current_search_term,
         search_column=db_column_name
     )
@@ -467,7 +467,8 @@ def display_invoice_table(user_role):
         df_facturas = df_facturas.sort_values(by=['sort_key', 'Fecha Generacion'], ascending=[True, False])
         df_facturas = df_facturas.drop(columns=['sort_key'])
 
-        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
+        # Añadir la clave dinámica al st.dataframe
+        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True, key=f"facturas_table_{st.session_state.dataframe_key}")
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
@@ -553,7 +554,6 @@ def display_invoice_table(user_role):
                             if success:
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None # Clear confirmation state
-                                invalidate_facturas_cache() # Invalida la caché después de una eliminación exitosa
                                 cancelar_edicion_action() # Reset form state and trigger rerun
                             else:
                                 st.error("No se pudo eliminar la factura.")
@@ -601,7 +601,6 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
-        invalidate_facturas_cache() # Invalida la caché después de guardar
         cancelar_edicion_action()
     else:
         st.error(f"La factura con numero '{numero_factura}' ya existe.")
@@ -650,7 +649,6 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
 
     if success:
         st.success("Factura actualizada correctamente.")
-        invalidate_facturas_cache() # Invalida la caché después de actualizar
         cancelar_edicion_action()
     else:
         st.error(f"No se pudo actualizar la factura. El numero de factura '{numero_factura}' ya podria existir.")
@@ -697,7 +695,6 @@ def auditar_factura_action(factura_id, nuevo_estado_auditoria, observacion, tipo
 
     if success:
         st.success(f"Estado de auditoria de factura actualizado a '{nuevo_estado_auditoria}'.")
-        invalidate_facturas_cache() # Invalida la caché después de auditar
         cancelar_edicion_action() # Reset state and trigger rerun
     else:
         st.error("No se pudo actualizar el estado de auditoria de la factura.")
@@ -753,7 +750,6 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
 
     if success:
         st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
-        invalidate_facturas_cache() # Invalida la caché después de refacturar
         cancelar_edicion_action()
     else:
         st.error(f"No se pudo guardar la factura de reemplazo. El numero '{new_numero_factura}' ya podria existir.")
@@ -768,7 +764,6 @@ def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actu
     )
     if success:
         st.success(f"Factura ID: {factura_id} marcada como 'Corregida por Legalizador'.")
-        invalidate_facturas_cache() # Invalida la caché después de marcar como corregida
         cancelar_edicion_action()
     else:
         st.error("No se pudo marcar la factura como corregida.")
@@ -778,7 +773,6 @@ def actualizar_fecha_entrega_radicador_action(factura_id, set_date):
     success = db_ops.actualizar_fecha_entrega_radicador(factura_id, fecha_entrega)
     if success:
         st.success("Fecha de entrega al radicador actualizada correctamente.")
-        invalidate_facturas_cache() # Invalida la caché después de actualizar fecha radicador
         cancelar_edicion_action() # Reset state and trigger rerun
     else:
         st.error("No se pudo actualizar la fecha de entrega al radicador.")
@@ -797,8 +791,10 @@ def cancelar_edicion_action():
     # Incrementa las claves de los widgets de filtro para forzar su reseteo
     st.session_state.filter_text_key += 1
     st.session_state.filter_select_key += 1
-    # No es necesario invalidar la caché aquí, ya que las acciones que la llaman
-    # ya lo hacen antes de llamar a esta función.
+    # Incrementa la clave del dataframe principal para forzar su redibujo
+    st.session_state.dataframe_key += 1
+    # Incrementa la clave del dataframe de estadísticas para forzar su redibujo
+    st.session_state.stats_dataframe_key += 1
 
 
 def export_df_to_csv(df):
