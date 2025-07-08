@@ -649,6 +649,35 @@ def obtener_conteo_facturas_con_errores():
                 conn.close()
     return 0
 
+def obtener_conteo_facturas_pendientes_global():
+    """
+    Obtiene el conteo total de facturas con estado_auditoria 'Pendiente'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria = 'Pendiente';
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas pendientes global en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo total de facturas pendientes: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
 def obtener_conteo_total_facturas():
     """
     Obtiene el conteo total de todas las facturas en el sistema.
