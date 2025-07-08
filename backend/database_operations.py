@@ -3,6 +3,7 @@ import psycopg2 # Importar la librería para PostgreSQL
 from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
 from datetime import datetime
 import time # Importar la librería time
+import streamlit as st # Importar streamlit para usar st.cache_resource
 
 # --- Funciones de Conexión a la Base de Datos ---
 
@@ -54,6 +55,7 @@ def get_db_connection():
 
 # --- Operaciones de la Base de Datos ---
 
+@st.cache_resource # ¡NUEVO! Esto asegura que la función se ejecute solo una vez por sesión.
 def crear_tablas():
     """
     Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' en la base de datos
@@ -281,7 +283,7 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
         finally:
             if conn:
                 conn.close()
-    return False
+    return None
 
 def obtener_factura_por_id(factura_id):
     """

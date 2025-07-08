@@ -3,17 +3,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import os
 
-# --- INICIO DE DEPURACIÓN DE SECRETS ---
-# Intenta acceder a los secretos directamente para verificar si secrets.toml se está leyendo.
-try:
-    db_host_from_secrets = st.secrets["DB_HOST"]
-    st.sidebar.write(f"DEBUG (Cloud): DB_HOST desde st.secrets: {db_host_from_secrets}")
-except KeyError as e:
-    st.sidebar.error(f"DEBUG (Cloud): Error al acceder a un secreto: {e}. Asegúrate de que .streamlit/secrets.toml esté configurado correctamente.")
-except Exception as e:
-    st.sidebar.error(f"DEBUG (Cloud): Error inesperado al leer secretos: {e}")
-# --- FIN DE DEPURACIÓN DE SECRETS ---
-
+# Importar las operaciones de la base de datos
+from backend import database_operations as db_ops
 
 # Configurar el diseño de la página para usar todo el ancho disponible
 st.set_page_config(layout="wide")
@@ -23,11 +14,9 @@ st.set_page_config(layout="wide")
 if not os.path.exists('data'):
     os.makedirs('data')
 
-# Importar las operaciones de la base de datos
-from backend import database_operations as db_ops
-
 # Crear las tablas de la base de datos si no existen
 # Esto también intentará la conexión a la DB y mostrará logs detallados.
+# ¡La función crear_tablas ahora tiene @st.cache_resource para ejecutarse una sola vez!
 db_ops.crear_tablas()
 
 # --- Inicializar estado de sesión para el filtro y claves de widgets ---
@@ -814,4 +803,3 @@ if st.session_state['logged_in']:
     main_app_page()
 else:
     login_page()
-# Esto es un cambio para forzar el redespliegue
