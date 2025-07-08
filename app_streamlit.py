@@ -457,7 +457,8 @@ def display_invoice_table(user_role):
         df_facturas = df_facturas.drop(columns=['sort_key'])
 
         # Añadir la clave dinámica al st.dataframe
-        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True, key=f"facturas_table_{st.session_state.dataframe_key}")
+        # Se ha eliminado 'hide_index=True' para ver si mejora el ajuste de columnas.
+        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, key=f"facturas_table_{st.session_state.dataframe_key}")
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
