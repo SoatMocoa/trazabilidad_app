@@ -1,8 +1,8 @@
 import os
 import psycopg2 # Importar la librería para PostgreSQL
 from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
-from datetime import datetime # Necesario para guardar_factura_reemplazo
-import time # Importar la librería time para depuración de tiempos
+from datetime import datetime
+import time # Importar la librería time
 
 # --- Funciones de Conexión a la Base de Datos ---
 
@@ -41,7 +41,8 @@ def get_db_connection():
             database=db_name,
             user=db_user,
             password=db_password,
-            port=db_port
+            port=db_port,
+            sslmode='require' # ¡NUEVO! Asegura que la conexión use SSL
         )
         end_time = time.time() # Finalizar el temporizador
         print(f"DEBUG: Conexión a la DB establecida en {end_time - start_time:.4f} segundos.")
