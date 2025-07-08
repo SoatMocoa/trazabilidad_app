@@ -372,13 +372,33 @@ def display_bulk_load_section():
             st.rerun()
 
 def display_statistics():
-    stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps() # Llamada a la función actualizada
+    # Estadísticas por Legalizador y EPS (ya existente)
+    st.subheader("Facturas Pendientes por Legalizador y EPS")
+    stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps()
     if stats:
-        df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"]) # Columnas actualizadas
-        # Añadir la clave dinámica al st.dataframe de estadísticas
+        df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"])
         st.dataframe(df_stats, use_container_width=True, key=f"stats_table_{st.session_state.stats_dataframe_key}")
     else:
         st.info("No hay estadisticas disponibles de facturas pendientes.")
+
+    st.markdown("---") # Separador
+
+    # Nuevas estadísticas globales
+    st.subheader("Estadísticas Globales de Facturas")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        total_radicadas_ok = db_ops.obtener_conteo_facturas_radicadas_ok()
+        st.metric(label="Facturas Radicadas OK", value=total_radicadas_ok)
+
+    with col2:
+        total_con_errores = db_ops.obtener_conteo_facturas_con_errores()
+        st.metric(label="Facturas con Errores", value=total_con_errores)
+
+    with col3:
+        total_facturas_cargadas = db_ops.obtener_conteo_total_facturas()
+        st.metric(label="Total Facturas Cargadas", value=total_facturas_cargadas)
+
 
 def highlight_rows(row):
     styles = [''] * len(row)

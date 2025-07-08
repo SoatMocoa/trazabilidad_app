@@ -1,9 +1,8 @@
 import os
 import psycopg2 # Importar la librería para PostgreSQL
 from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
-from datetime import datetime
-import time # Importar la librería time
-import streamlit as st # Importar streamlit para usar st.cache_resource
+from datetime import datetime # Necesario para guardar_factura_reemplazo
+import time # Importar la librería time para depuración de tiempos
 
 # --- Funciones de Conexión a la Base de Datos ---
 
@@ -35,36 +34,30 @@ def get_db_connection():
         # No retornamos None aquí para que el error de conexión se propague y sea visible.
 
     try:
-        print("DEBUG: Intentando establecer conexión con PostgreSQL...") # Nuevo print
         start_time = time.time() # Iniciar el temporizador
         conn = psycopg2.connect(
             host=db_host,
             database=db_name,
             user=db_user,
             password=db_password,
-            port=db_port,
-            sslmode='require' # ¡NUEVO! Asegura que la conexión use SSL
+            port=db_port
         )
         end_time = time.time() # Finalizar el temporizador
         print(f"DEBUG: Conexión a la DB establecida en {end_time - start_time:.4f} segundos.")
         return conn
     except Error as e:
         print(f"Error al conectar a la base de datos PostgreSQL: {e}")
-        print("DEBUG: La función get_db_connection retornó None debido a un error.") # Nuevo print
         return None
 
 # --- Operaciones de la Base de Datos ---
 
-@st.cache_resource # ¡NUEVO! Esto asegura que la función se ejecute solo una vez por sesión.
 def crear_tablas():
     """
     Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' en la base de datos
     si no existen. También inserta usuarios por defecto.
     """
-    print("DEBUG: Llamando a get_db_connection para crear tablas.") # Nuevo print
     conn = get_db_connection()
     if conn:
-        print("DEBUG: Conexión obtenida exitosamente en crear_tablas. Procediendo a crear/verificar tablas.") # Nuevo print
         try:
             cursor = conn.cursor()
             start_time = time.time() # Iniciar temporizador para crear_tablas
@@ -136,8 +129,6 @@ def crear_tablas():
         finally:
             if conn:
                 conn.close()
-    else:
-        print("ADVERTENCIA: No se pudo obtener una conexión a la base de datos en crear_tablas. Las tablas no se crearon/verificaron.") # Nuevo print
 
 def obtener_credenciales_usuario(username):
     """
@@ -283,7 +274,7 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
         finally:
             if conn:
                 conn.close()
-    return None
+    return False
 
 def obtener_factura_por_id(factura_id):
     """
@@ -599,3 +590,88 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
 
 # Alias para la función de estadísticas para mantener la compatibilidad con el frontend
 obtener_conteo_facturas_pendientes_por_legalizador_y_eps = obtener_conteo_facturas_por_legalizador_y_eps
+
+def obtener_conteo_facturas_radicadas_ok():
+    """
+    Obtiene el conteo de facturas con estado_auditoria 'Radicada OK'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria = 'Radicada OK';
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas radicadas OK en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo de facturas radicadas OK: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_conteo_facturas_con_errores():
+    """
+    Obtiene el conteo de facturas con estado_auditoria 'Devuelta por Auditor' o 'Corregida por Legalizador'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria IN ('Devuelta por Auditor', 'Corregida por Legalizador');
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas con errores en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo de facturas con errores: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_conteo_total_facturas():
+    """
+    Obtiene el conteo total de todas las facturas en el sistema.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas;
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo total de facturas en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo total de facturas: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
