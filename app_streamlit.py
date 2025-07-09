@@ -69,20 +69,8 @@ def calcular_dias_habiles_entre_fechas(fecha_inicio_obj, fecha_fin_obj):
     return dias_habiles
 
 # --- Listas de opciones ---
-FACTURADORES = sorted(list(set([
-    "GLORIA SULEIMA ACOSTA", "JHONNY ALEXANDER AYALA", "DIANA MILENA TELLEZ",
-    "DANY ALEXANDER MORENO", "GEAN CARLOS VITERY", "MAROLYN ALEJANDRA BURBANO",
-    "LEYDY JOHANA CARDENAS", "SHANNYA MARY CHAMORRO", "OLGA LUCY NARVAEZ",
-    "CRISTIAN DUVAN SAAVEDRA", "SOL BURBANO", "ANLLY YULIED HERNANDEZ",
-    "CLAUDIA GARZON", "ANGELA CATHERIN NOVA MORA", "ROSA JOHANNA ROMERO",
-    "MARCELA MONTEZUMA"
-])))
-
-EPS_OPCIONES = sorted(list(set([
-    "EMSSANAR", "NUEVA EPS", "MALLAMAS", "EJERCITO", "POLICIA",
-    "FIDEICOMISOS", "SCRT. DE SALUD", "ASMET SALUD", "OTRAS EPS",
-    "FAMILIAR DE COLOMBIA", "AIC"
-])))
+# Estas listas ahora se cargarán dinámicamente desde la base de datos
+# en las funciones donde se utilizan los selectbox.
 
 AREA_SERVICIO_OPCIONES = ["SOAT", "Consulta Externa", "Urgencias", "Hospitalizacion", "Vacunacion"]
 
@@ -158,26 +146,32 @@ def display_invoice_entry_form(user_role):
     if 'form_key' not in st.session_state:
         st.session_state.form_key = 0
 
+    # Cargar facturadores y EPS dinámicamente
+    facturadores_disponibles = db_ops.obtener_facturadores_unicos()
+    eps_disponibles = db_ops.obtener_eps_unicas()
+
     with st.form(key=f"invoice_entry_form_{st.session_state.form_key}", clear_on_submit=False):
         facturador_default_index = 0
         if st.session_state.current_invoice_data and not st.session_state.refacturar_mode:
             try:
-                facturador_default_index = FACTURADORES.index(st.session_state.current_invoice_data[3]) + 1
+                # Usar facturadores_disponibles para encontrar el índice
+                facturador_default_index = facturadores_disponibles.index(st.session_state.current_invoice_data[3]) + 1
             except ValueError:
                 facturador_default_index = 0
 
-        facturador = st.selectbox("Legalizador:", options=[""] + FACTURADORES,
+        facturador = st.selectbox("Legalizador:", options=[""] + facturadores_disponibles,
                                   index=facturador_default_index,
                                   disabled=st.session_state.refacturar_mode)
 
         eps_default_index = 0
         if st.session_state.current_invoice_data and not st.session_state.refacturar_mode:
             try:
-                eps_default_index = EPS_OPCIONES.index(st.session_state.current_invoice_data[5]) + 1
+                # Usar eps_disponibles para encontrar el índice
+                eps_default_index = eps_disponibles.index(st.session_state.current_invoice_data[5]) + 1
             except ValueError:
                 eps_default_index = 0
 
-        eps = st.selectbox("EPS:", options=[""] + EPS_OPCIONES,
+        eps = st.selectbox("EPS:", options=[""] + eps_disponibles,
                            index=eps_default_index,
                            disabled=st.session_state.refacturar_mode)
 
@@ -249,10 +243,14 @@ def display_invoice_entry_form(user_role):
             st.rerun()
 
 def display_bulk_load_section():
+    # Cargar facturadores y EPS dinámicamente para la carga masiva
+    facturadores_disponibles = db_ops.obtener_facturadores_unicos()
+    eps_disponibles = db_ops.obtener_eps_unicas()
+
     with st.form("bulk_load_form"):
         st.write("Por favor, selecciona el Legalizador, EPS y Area de Servicio para todas las facturas del CSV.")
-        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES)
-        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES)
+        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + facturadores_disponibles)
+        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + eps_disponibles)
         area_servicio_bulk = st.selectbox("Area de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES)
         
         uploaded_file = st.file_uploader("Cargar archivo CSV (columnas: Numero de Factura, Fecha de Generacion)", type=["csv"])
