@@ -1,12 +1,9 @@
 import os
 import psycopg2 # Importar la librería para PostgreSQL
 from psycopg2 import Error # Importar la clase Error para manejar excepciones de psycopg2
-from datetime import datetime # Necesario para guardar_factura_reemplazo
-import time # Importar la librería time para depuración de tiempos
-
-# --- PRUEBA DE LOG: ESTA LÍNEA DEBE APARECER EN TU TERMINAL SI EL ARCHIVO SE ESTÁ EJECUTANDO ---
-print("DEBUG: database_operations.py se está cargando y ejecutando.")
-# --- FIN PRUEBA DE LOG ---
+from datetime import datetime
+import time # Importar la librería time
+import streamlit as st # Importar streamlit para usar st.cache_resource
 
 # --- Funciones de Conexión a la Base de Datos ---
 
@@ -21,7 +18,7 @@ def get_db_connection():
     db_password = os.environ.get("DB_PASSWORD")
     db_port = os.environ.get("DB_PORT", "5432")
 
-    # --- INICIO DE DEPURACIÓN (RE-HABILITADO) ---
+    # --- INICIO DE DEPURACIÓN ---
     print("\n--- Verificando variables de entorno para la DB ---")
     print(f"DB_HOST: {db_host}")
     print(f"DB_NAME: {db_name}")
@@ -34,139 +31,113 @@ def get_db_connection():
     if not all([db_host, db_name, db_user, db_password]):
         print("ADVERTENCIA: Una o más variables de entorno de la base de datos no están configuradas.")
         print("Intentando conectar a localhost como fallback (esto causará un error si no hay una DB local).")
+        # Si las variables no están, psycopg2 intentará localhost por defecto.
+        # No retornamos None aquí para que el error de conexión se propague y sea visible.
 
     try:
-        print("DEBUG: Intentando establecer conexión con PostgreSQL...")
-        start_time = time.time()
+        print("DEBUG: Intentando establecer conexión con PostgreSQL...") # Nuevo print
+        start_time = time.time() # Iniciar el temporizador
         conn = psycopg2.connect(
             host=db_host,
             database=db_name,
             user=db_user,
             password=db_password,
-            port=db_port
+            port=db_port,
+            sslmode='require' # ¡NUEVO! Asegura que la conexión use SSL
         )
-        end_time = time.time()
+        end_time = time.time() # Finalizar el temporizador
         print(f"DEBUG: Conexión a la DB establecida en {end_time - start_time:.4f} segundos.")
         return conn
     except Error as e:
         print(f"Error al conectar a la base de datos PostgreSQL: {e}")
-        print("DEBUG: La función get_db_connection retornó None debido a un error.")
+        print("DEBUG: La función get_db_connection retornó None debido a un error.") # Nuevo print
         return None
 
 # --- Operaciones de la Base de Datos ---
 
+@st.cache_resource # ¡NUEVO! Esto asegura que la función se ejecute solo una vez por sesión.
 def crear_tablas():
     """
     Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' en la base de datos
     si no existen. También inserta usuarios por defecto.
     """
-    print("DEBUG: Llamando a get_db_connection para crear tablas.")
+    print("DEBUG: Llamando a get_db_connection para crear tablas.") # Nuevo print
     conn = get_db_connection()
     if conn:
-        print("DEBUG: Conexión obtenida exitosamente en crear_tablas. Procediendo a crear/verificar tablas.")
+        print("DEBUG: Conexión obtenida exitosamente en crear_tablas. Procediendo a crear/verificar tablas.") # Nuevo print
         try:
             cursor = conn.cursor()
-            start_time = time.time()
+            start_time = time.time() # Iniciar temporizador para crear_tablas
 
             # Tabla de Usuarios
-            try:
-                print("DEBUG: Creando/Verificando tabla 'usuarios'...")
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS usuarios (
-                        id SERIAL PRIMARY KEY,
-                        username TEXT NOT NULL UNIQUE,
-                        password TEXT NOT NULL,
-                        role TEXT NOT NULL
-                    );
-                """)
-                print("DEBUG: Tabla 'usuarios' verificada/creada.")
-            except Error as e:
-                print(f"ERROR: Fallo al crear/verificar tabla 'usuarios': {e}")
-                raise # Re-lanzar para que el bloque except principal lo capture
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL
+                );
+            """)
 
             # Insertar usuarios por defecto si no existen
-            try:
-                print("DEBUG: Insertando usuarios por defecto...")
-                cursor.execute("""
-                    INSERT INTO usuarios (username, password, role) VALUES ('legalizador', 'legalizador123', 'legalizador')
-                    ON CONFLICT (username) DO NOTHING;
-                """)
-                cursor.execute("""
-                    INSERT INTO usuarios (username, password, role) VALUES ('auditor', 'auditor123', 'auditor')
-                    ON CONFLICT (username) DO NOTHING;
-                """)
-                print("DEBUG: Usuarios por defecto insertados/verificados.")
-            except Error as e:
-                print(f"ERROR: Fallo al insertar usuarios por defecto: {e}")
-                raise # Re-lanzar
+            # ON CONFLICT DO NOTHING es específico de PostgreSQL
+            cursor.execute("""
+                INSERT INTO usuarios (username, password, role) VALUES ('legalizador', 'legalizador123', 'legalizador')
+                ON CONFLICT (username) DO NOTHING;
+            """)
+            cursor.execute("""
+                INSERT INTO usuarios (username, password, role) VALUES ('auditor', 'auditor123', 'auditor')
+                ON CONFLICT (username) DO NOTHING;
+            """)
 
             # Tabla de Facturas
-            try:
-                print("DEBUG: Creando/Verificando tabla 'facturas'...")
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS facturas (
-                        id SERIAL PRIMARY KEY,
-                        numero_factura TEXT NOT NULL UNIQUE,
-                        area_servicio TEXT,
-                        facturador TEXT,
-                        fecha_generacion TEXT,
-                        eps TEXT,
-                        fecha_hora_entrega TEXT,
-                        tiene_correccion BOOLEAN DEFAULT FALSE,
-                        descripcion_devolucion TEXT,
-                        fecha_devolucion_lider TEXT,
-                        revisado BOOLEAN DEFAULT FALSE,
-                        factura_original_id INTEGER,
-                        estado TEXT DEFAULT 'Activa', -- Activa, Anulada, Reemplazada
-                        reemplazada_por_numero_factura TEXT, -- Nuevo campo para el número de la factura que la reemplazó
-                        estado_auditoria TEXT DEFAULT 'Pendiente', -- Pendiente, Radicada OK, Devuelta por Auditor, Corregida por Legalizador
-                        observacion_auditor TEXT,
-                        tipo_error TEXT,
-                        fecha_reemplazo TEXT, -- Fecha en que la factura fue marcada como reemplazada
-                        fecha_entrega_radicador TEXT, -- Nueva columna para la fecha de entrega al radicador
-                        FOREIGN KEY (factura_original_id) REFERENCES facturas(id)
-                    );
-                """)
-                print("DEBUG: Tabla 'facturas' verificada/creada.")
-            except Error as e:
-                print(f"ERROR: Fallo al crear/verificar tabla 'facturas': {e}")
-                raise # Re-lanzar
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS facturas (
+                    id SERIAL PRIMARY KEY,
+                    numero_factura TEXT NOT NULL UNIQUE,
+                    area_servicio TEXT,
+                    facturador TEXT,
+                    fecha_generacion TEXT,
+                    eps TEXT,
+                    fecha_hora_entrega TEXT,
+                    tiene_correccion BOOLEAN DEFAULT FALSE,
+                    descripcion_devolucion TEXT,
+                    fecha_devolucion_lider TEXT,
+                    revisado BOOLEAN DEFAULT FALSE,
+                    factura_original_id INTEGER,
+                    estado TEXT DEFAULT 'Activa', -- Activa, Anulada, Reemplazada
+                    reemplazada_por_numero_factura TEXT, -- Nuevo campo para el número de la factura que la reemplazó
+                    estado_auditoria TEXT DEFAULT 'Pendiente', -- Pendiente, Radicada OK, Devuelta por Auditor, Corregida por Legalizador
+                    observacion_auditor TEXT,
+                    tipo_error TEXT,
+                    fecha_reemplazo TEXT, -- Fecha en que la factura fue marcada como reemplazada
+                    fecha_entrega_radicador TEXT, -- Nueva columna para la fecha de entrega al radicador
+                    FOREIGN KEY (factura_original_id) REFERENCES facturas(id)
+                );
+            """)
 
             # Tabla de Detalles SOAT
-            try:
-                print("DEBUG: Creando/Verificando tabla 'detalles_soat'...")
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS detalles_soat (
-                        id SERIAL PRIMARY KEY,
-                        factura_id INTEGER UNIQUE,
-                        fecha_generacion_soat TEXT,
-                        FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
-                    );
-                """)
-                print("DEBUG: Tabla 'detalles_soat' verificada/creada.")
-            except Error as e:
-                print(f"ERROR: Fallo al crear/verificar tabla 'detalles_soat': {e}")
-                raise # Re-lanzar
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS detalles_soat (
+                    id SERIAL PRIMARY KEY,
+                    factura_id INTEGER UNIQUE,
+                    fecha_generacion_soat TEXT,
+                    FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
+                );
+            """)
 
             conn.commit()
-            end_time = time.time()
-            print(f"DEBUG: Tablas verificadas/creadas y cambios confirmados en {end_time - start_time:.4f} segundos.")
+            end_time = time.time() # Finalizar temporizador
+            print(f"DEBUG: Tablas verificadas/creadas en {end_time - start_time:.4f} segundos.")
         except Error as e:
-            print(f"Error general durante la creación/verificación de tablas: {e}")
+            print(f"Error al crear tablas o insertar usuarios: {e}")
             if conn:
-                print("DEBUG: Intentando rollback debido a un error...")
-                try:
-                    conn.rollback()
-                    print("DEBUG: Rollback exitoso.")
-                except Error as rollback_e:
-                    print(f"ERROR: Fallo al realizar rollback: {rollback_e}")
+                conn.rollback() # Revertir la transacción en caso de error
         finally:
             if conn:
-                print("DEBUG: Cerrando conexión a la DB...")
                 conn.close()
-                print("DEBUG: Conexión a la DB cerrada.")
     else:
-        print("ADVERTENCIA: No se pudo obtener una conexión a la base de datos en crear_tablas. Las tablas no se crearon/verificaron.")
+        print("ADVERTENCIA: No se pudo obtener una conexión a la base de datos en crear_tablas. Las tablas no se crearon/verificaron.") # Nuevo print
 
 def obtener_credenciales_usuario(username):
     """
@@ -177,8 +148,11 @@ def obtener_credenciales_usuario(username):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("SELECT password, role FROM usuarios WHERE username = %s;", (username,))
             user_data = cursor.fetchone()
+            end_time = time.time()
+            print(f"DEBUG: Obtener credenciales de usuario en {end_time - start_time:.4f} segundos.")
             return user_data
         except Error as e:
             print(f"Error al obtener credenciales del usuario: {e}")
@@ -197,10 +171,12 @@ def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_serv
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
+            # Verificar si el número de factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
             if cursor.fetchone():
                 print(f"Factura con número {numero_factura} ya existe. No se insertó.")
-                return None
+                return None # Indicar que la factura ya existe
 
             cursor.execute("""
                 INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
@@ -208,6 +184,8 @@ def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_serv
             """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
             factura_id = cursor.fetchone()[0]
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar factura en {end_time - start_time:.4f} segundos.")
             return factura_id
         except Error as e:
             print(f"Error al guardar factura: {e}")
@@ -228,9 +206,11 @@ def insertar_factura_bulk(numero_factura, area_servicio, facturador, fecha_gener
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
+            # Verificar si el número de factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
             if cursor.fetchone():
-                return None
+                return None # Indicar que la factura ya existe
 
             cursor.execute("""
                 INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
@@ -238,6 +218,8 @@ def insertar_factura_bulk(numero_factura, area_servicio, facturador, fecha_gener
             """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
             factura_id = cursor.fetchone()[0]
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Insertar factura bulk en {end_time - start_time:.4f} segundos.")
             return factura_id
         except Error as e:
             print(f"Error al insertar factura en bulk: {e}")
@@ -257,11 +239,14 @@ def guardar_detalles_soat(factura_id, fecha_generacion_soat):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
                 VALUES (%s, %s);
             """, (factura_id, fecha_generacion_soat))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar detalles SOAT en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al guardar detalles SOAT: {e}")
@@ -281,11 +266,14 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
                 VALUES (%s, %s);
             """, (factura_id, fecha_generacion_soat))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Insertar detalles SOAT bulk en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al insertar detalles SOAT en bulk: {e}")
@@ -295,7 +283,7 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
         finally:
             if conn:
                 conn.close()
-    return False
+    return None
 
 def obtener_factura_por_id(factura_id):
     """
@@ -306,6 +294,7 @@ def obtener_factura_por_id(factura_id):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 SELECT
                     f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
@@ -324,6 +313,8 @@ def obtener_factura_por_id(factura_id):
                     f.id = %s;
             """, (factura_id,))
             factura_data = cursor.fetchone()
+            end_time = time.time()
+            print(f"DEBUG: Obtener factura por ID en {end_time - start_time:.4f} segundos.")
             return factura_data
         except Error as e:
             print(f"Error al obtener factura por ID: {e}")
@@ -345,6 +336,8 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
+            # Verificar si el nuevo numero_factura ya existe para otra factura (evitar duplicados)
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
             if cursor.fetchone():
                 print(f"Error: El numero de factura '{numero_factura}' ya existe para otra factura.")
@@ -376,6 +369,8 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
                   reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo,
                   factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar factura en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar factura: {e}")
@@ -395,6 +390,7 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 UPDATE facturas SET
                     estado_auditoria = %s,
@@ -403,6 +399,8 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
                 WHERE id = %s;
             """, (nuevo_estado_auditoria, observacion, tipo_error, factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar estado auditoria en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar estado de auditoria: {e}")
@@ -422,12 +420,15 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 UPDATE facturas SET
                     fecha_entrega_radicador = %s
                 WHERE id = %s;
             """, (fecha_entrega, factura_id))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Actualizar fecha entrega radicador en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al actualizar fecha de entrega al radicador: {e}")
@@ -448,8 +449,11 @@ def eliminar_factura(factura_id):
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("DELETE FROM facturas WHERE id = %s;", (factura_id,))
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Eliminar factura en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al eliminar factura: {e}")
@@ -471,6 +475,7 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             # 1. Verificar si el nuevo numero_factura ya existe
             cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (new_numero_factura,))
             if cursor.fetchone():
@@ -496,6 +501,8 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
             """, (new_numero_factura, fecha_reemplazo, old_factura_id))
 
             conn.commit()
+            end_time = time.time()
+            print(f"DEBUG: Guardar factura reemplazo en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
             print(f"Error al guardar factura de reemplazo: {e}")
@@ -535,11 +542,12 @@ def cargar_facturas(search_term=None, search_column=None):
             """
             params = []
             if search_term and search_column:
-                # Asegurarse de que search_term no tenga espacios en blanco al inicio/final
-                clean_search_term = search_term.strip()
+                # --- NUEVA LÍNEA DE DEPURACIÓN AQUÍ ---
+                print(f"DEBUG (DB - FILTRO): Se activó la lógica de filtro en cargar_facturas. Término: '{search_term}', Columna: '{search_column}'")
+                # --- FIN NUEVA LÍNEA DE DEPURACIÓN ---
                 # Usar ILIKE para búsqueda insensible a mayúsculas/minúsculas en PostgreSQL
                 query += f" WHERE {search_column} ILIKE %s"
-                params.append(f"%{clean_search_term}%")
+                params.append(f"%{search_term}%")
             
             # Ordenar por id descendente para ver las más recientes primero
             query += " ORDER BY f.id DESC;"
@@ -562,6 +570,7 @@ def cargar_facturas(search_term=None, search_column=None):
             cursor.execute(query, tuple(params))
             facturas = cursor.fetchall()
             end_time = time.time()
+            print(f"DEBUG: Cargar facturas en {end_time - start_time:.4f} segundos.")
             return facturas
         except Error as e:
             print(f"Error al cargar facturas: {e}")
@@ -579,6 +588,7 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
     if conn:
         try:
             cursor = conn.cursor()
+            start_time = time.time()
             cursor.execute("""
                 SELECT
                     facturador,
@@ -594,6 +604,8 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
                     facturador, eps;
             """)
             stats = cursor.fetchall()
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas pendientes en {end_time - start_time:.4f} segundos.")
             return stats
         except Error as e:
             print(f"Error al obtener estadísticas de facturas pendientes: {e}")
@@ -605,143 +617,3 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
 
 # Alias para la función de estadísticas para mantener la compatibilidad con el frontend
 obtener_conteo_facturas_pendientes_por_legalizador_y_eps = obtener_conteo_facturas_por_legalizador_y_eps
-
-def obtener_conteo_facturas_radicadas_ok():
-    """
-    Obtiene el conteo de facturas con estado_auditoria 'Radicada OK'.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    COUNT(id)
-                FROM
-                    facturas
-                WHERE
-                    estado_auditoria = 'Radicada OK';
-            """)
-            count = cursor.fetchone()[0]
-            return count
-        except Error as e:
-            print(f"Error al obtener conteo de facturas radicadas OK: {e}")
-            return 0
-        finally:
-            if conn:
-                conn.close()
-    return 0
-
-def obtener_conteo_facturas_con_errores():
-    """
-    Obtiene el conteo de facturas con estado_auditoria 'Devuelta por Auditor' o 'Corregida por Legalizador'.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    COUNT(id)
-                FROM
-                    facturas
-                WHERE
-                    estado_auditoria IN ('Devuelta por Auditor', 'Corregida por Legalizador');
-            """)
-            count = cursor.fetchone()[0]
-            return count
-        except Error as e:
-            print(f"Error al obtener conteo de facturas con errores: {e}")
-            return 0
-        finally:
-            if conn:
-                conn.close()
-    return 0
-
-def obtener_conteo_facturas_pendientes_global():
-    """
-    Obtiene el conteo total de facturas con estado_auditoria 'Pendiente'.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    COUNT(id)
-                FROM
-                    facturas
-                WHERE
-                    estado_auditoria = 'Pendiente';
-            """)
-            count = cursor.fetchone()[0]
-            return count
-        except Error as e:
-            print(f"Error al obtener conteo total de facturas pendientes: {e}")
-            return 0
-        finally:
-            if conn:
-                conn.close()
-    return 0
-
-def obtener_conteo_total_facturas():
-    """
-    Obtiene el conteo total de todas las facturas en el sistema.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    COUNT(id)
-                FROM
-                    facturas;
-            """)
-            count = cursor.fetchone()[0]
-            return count
-        except Error as e:
-            print(f"Error al obtener conteo total de facturas: {e}")
-            return 0
-        finally:
-            if conn:
-                conn.close()
-    return 0
-
-def obtener_facturadores_unicos():
-    """
-    Obtiene una lista de todos los facturadores únicos de la tabla facturas.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT facturador FROM facturas WHERE facturador IS NOT NULL ORDER BY facturador;")
-            facturadores = [row[0] for row in cursor.fetchall()]
-            return facturadores
-        except Error as e:
-            print(f"Error al obtener facturadores únicos: {e}")
-            return []
-        finally:
-            if conn:
-                conn.close()
-    return []
-
-def obtener_eps_unicas():
-    """
-    Obtiene una lista de todas las EPS únicas de la tabla facturas.
-    """
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT eps FROM facturas WHERE eps IS NOT NULL ORDER BY eps;")
-            epss = [row[0] for row in cursor.fetchall()]
-            return epss
-        except Error as e:
-            print(f"Error al obtener EPS únicas: {e}")
-            return []
-        finally:
-            if conn:
-                conn.close()
-    return []
