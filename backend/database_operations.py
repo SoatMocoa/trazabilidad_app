@@ -4,6 +4,9 @@ from psycopg2 import Error # Importar la clase Error para manejar excepciones de
 from datetime import datetime # Necesario para guardar_factura_reemplazo
 import time # Importar la librería time para depuración de tiempos
 
+# --- ESTA ES LA VERSIÓN MÁS RECIENTE DE database_operations.py ---
+# Si ves esta línea en tus logs, sabes que este archivo se está cargando.
+
 # --- Funciones de Conexión a la Base de Datos ---
 
 def get_db_connection():
@@ -15,7 +18,7 @@ def get_db_connection():
     db_name = os.environ.get("DB_NAME")
     db_user = os.environ.get("DB_USER")
     db_password = os.environ.get("DB_PASSWORD")
-    db_port = os.environ.get("DB_PORT", "5432")
+    db_port = os.environ.get("DB_PORT", "6543")
 
     # --- INICIO DE DEPURACIÓN ---
     print("\n--- Verificando variables de entorno para la DB ---")
@@ -274,7 +277,7 @@ def insertar_detalles_soat_bulk(factura_id, fecha_generacion_soat):
         finally:
             if conn:
                 conn.close()
-    return False
+    return None
 
 def obtener_factura_por_id(factura_id):
     """
@@ -533,8 +536,8 @@ def cargar_facturas(search_term=None, search_column=None):
             """
             params = []
             if search_term and search_column:
-                # Usar ILIKE para búsqueda insensible a mayúsculas/minúsculas en PostgreSQL
-                query += f" WHERE {search_column} ILIKE %s"
+                # --- CORRECCIÓN AQUÍ: Especificar la tabla 'f' para evitar ambigüedad ---
+                query += f" WHERE f.{search_column} ILIKE %s"
                 params.append(f"%{search_term}%")
             
             # Ordenar por id descendente para ver las más recientes primero
@@ -591,3 +594,160 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
 # Alias para la función de estadísticas para mantener la compatibilidad con el frontend
 obtener_conteo_facturas_pendientes_por_legalizador_y_eps = obtener_conteo_facturas_por_legalizador_y_eps
 
+def obtener_conteo_facturas_radicadas_ok():
+    """
+    Obtiene el conteo de facturas con estado_auditoria 'Radicada OK'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria = 'Radicada OK';
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas radicadas OK en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo de facturas radicadas OK: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_conteo_facturas_con_errores():
+    """
+    Obtiene el conteo de facturas con estado_auditoria 'Devuelta por Auditor' o 'Corregida por Legalizador'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria IN ('Devuelta por Auditor', 'Corregida por Legalizador');
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas con errores en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo de facturas con errores: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_conteo_facturas_pendientes_global():
+    """
+    Obtiene el conteo total de facturas con estado_auditoria 'Pendiente'.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas
+                WHERE
+                    estado_auditoria = 'Pendiente';
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo facturas pendientes global en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo total de facturas pendientes: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_conteo_total_facturas():
+    """
+    Obtiene el conteo total de todas las facturas en el sistema.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    COUNT(id)
+                FROM
+                    facturas;
+            """)
+            count = cursor.fetchone()[0]
+            end_time = time.time()
+            print(f"DEBUG: Obtener conteo total de facturas en {end_time - start_time:.4f} segundos.")
+            return count
+        except Error as e:
+            print(f"Error al obtener conteo total de facturas: {e}")
+            return 0
+        finally:
+            if conn:
+                conn.close()
+    return 0
+
+def obtener_facturadores_unicos():
+    """
+    Obtiene una lista de todos los facturadores únicos de la tabla facturas.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("SELECT DISTINCT facturador FROM facturas WHERE facturador IS NOT NULL ORDER BY facturador;")
+            facturadores = [row[0] for row in cursor.fetchall()]
+            end_time = time.time()
+            print(f"DEBUG: Obtener facturadores unicos en {end_time - start_time:.4f} segundos.")
+            return facturadores
+        except Error as e:
+            print(f"Error al obtener facturadores únicos: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
+
+def obtener_eps_unicas():
+    """
+    Obtiene una lista de todas las EPS únicas de la tabla facturas.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("SELECT DISTINCT eps FROM facturas WHERE eps IS NOT NULL ORDER BY eps;")
+            epss = [row[0] for row in cursor.fetchall()]
+            end_time = time.time()
+            print(f"DEBUG: Obtener EPS unicas en {end_time - start_time:.4f} segundos.")
+            return epss
+        except Error as e:
+            print(f"Error al obtener EPS únicas: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
