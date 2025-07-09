@@ -30,6 +30,10 @@ if 'dataframe_key' not in st.session_state: # Clave para el dataframe principal 
     st.session_state.dataframe_key = 0
 if 'stats_dataframe_key' not in st.session_state: # NUEVA clave para el dataframe de estadísticas
     st.session_state.stats_dataframe_key = 0
+if 'search_term' not in st.session_state:
+    st.session_state.search_term = ""
+if 'search_criterion' not in st.session_state:
+    st.session_state.search_criterion = "Numero de Factura"
 
 
 # --- Funciones para calcular días hábiles ---
@@ -422,35 +426,56 @@ def highlight_rows(row):
     return styles
 
 def display_invoice_table(user_role):
-    col_search, col_criteria = st.columns([3, 2])
-    with col_search:
-        # Mantener el valor del campo de búsqueda en session_state
-        if 'search_term' not in st.session_state:
-            st.session_state.search_term = ""
-        search_term_input = st.text_input(
-            "Buscar:",
-            value=st.session_state.search_term, # Leer el valor de session_state
-            key=f"search_input_widget_{st.session_state.filter_text_key}"
-        )
-        # Actualizar session_state cuando el usuario escribe
-        st.session_state.search_term = search_term_input
+    # Usamos un st.form para que al presionar Enter en el text_input, se envíe el formulario
+    # y se dispare la acción de filtrado.
+    with st.form(key=f"filter_form_{st.session_state.filter_text_key}"):
+        col_search, col_criteria = st.columns([3, 2])
+        with col_search:
+            search_term_input = st.text_input(
+                "Buscar:",
+                value=st.session_state.search_term, # Leer el valor de session_state
+                key=f"search_input_widget_{st.session_state.filter_text_key}",
+                on_change=lambda: st.session_state.update(search_term=st.session_state[f"search_input_widget_{st.session_state.filter_text_key}"])
+            )
+            # Actualizar session_state cuando el usuario escribe (ya se hace con on_change)
+            # st.session_state.search_term = search_term_input # No es necesario si usamos on_change
 
-    with col_criteria:
-        # Mantener el valor del selectbox de criterio de búsqueda en session_state
-        if 'search_criterion' not in st.session_state:
-            st.session_state.search_criterion = "Numero de Factura"
-        options_criteria = ["Numero de Factura", "Legalizador", "EPS", "Area de Servicio", "Estado Auditoria"]
-        search_criterion_selectbox = st.selectbox(
-            "Buscar por:",
-            options=options_criteria,
-            index=options_criteria.index(st.session_state.search_criterion), # Leer el índice de session_state
-            key=f"search_criteria_widget_{st.session_state.filter_select_key}"
-        )
-        # Actualizar session_state cuando el usuario selecciona
-        st.session_state.search_criterion = search_criterion_selectbox
-    
+        with col_criteria:
+            options_criteria = ["Numero de Factura", "Legalizador", "EPS", "Area de Servicio", "Estado Auditoria"]
+            search_criterion_selectbox = st.selectbox(
+                "Buscar por:",
+                options=options_criteria,
+                index=options_criteria.index(st.session_state.search_criterion), # Leer el índice de session_state
+                key=f"search_criteria_widget_{st.session_state.filter_select_key}",
+                on_change=lambda: st.session_state.update(search_criterion=st.session_state[f"search_criteria_widget_{st.session_state.filter_select_key}"])
+            )
+            # Actualizar session_state cuando el usuario selecciona (ya se hace con on_change)
+            # st.session_state.search_criterion = search_criterion_selectbox # No es necesario si usamos on_change
+        
+        # Botones de acción del filtro dentro del formulario
+        col_buttons = st.columns([1, 1, 1])
+        with col_buttons[0]:
+            submitted_filter = st.form_submit_button("Aplicar Filtro")
+        with col_buttons[1]:
+            clear_filter_button = st.form_submit_button("Limpiar Filtro")
+
+    # Lógica para aplicar o limpiar el filtro
+    if submitted_filter:
+        # El on_change de los widgets ya actualizó session_state
+        pass # No necesitamos hacer nada aquí, el resto del script se ejecutará con los nuevos valores
+    elif clear_filter_button:
+        st.session_state.search_term = ""
+        st.session_state.search_criterion = "Numero de Factura"
+        # Forzar un re-run para que los widgets se reseteen y el filtro se aplique
+        st.rerun()
+
     current_search_term = st.session_state.search_term # Usar el valor directo de session_state
     current_search_criterion = st.session_state.search_criterion # Usar el valor directo de session_state
+
+    # --- DEBUGGING: Mostrar los valores del filtro en la UI ---
+    st.write(f"DEBUG: Término de búsqueda actual: '{current_search_term}'")
+    st.write(f"DEBUG: Criterio de búsqueda actual: '{current_search_criterion}'")
+    # --- FIN DEBUGGING ---
 
     db_column_name = {
         "Numero de Factura": "numero_factura",
@@ -465,6 +490,10 @@ def display_invoice_table(user_role):
         search_column=db_column_name
     )
     
+    # --- DEBUGGING: Mostrar cuántas facturas se obtuvieron ---
+    st.write(f"DEBUG: Número de facturas obtenidas de la DB: {len(facturas_raw)}")
+    # --- FIN DEBUGGING ---
+
     processed_facturas = []
     hoy_obj = datetime.now().date()
 
@@ -883,14 +912,16 @@ def cancelar_edicion_action():
         st.session_state.confirm_delete_id = None
     # Incrementa la clave del number_input para forzar su reseteo
     st.session_state.selected_invoice_input_key += 1
-    # NO incrementar las claves de los widgets de filtro para que mantengan su estado
-    # st.session_state.filter_text_key += 1
-    # st.session_state.filter_select_key += 1
     # Incrementa la clave del dataframe principal para forzar su redibujo
     st.session_state.dataframe_key += 1
     # Incrementa la clave del dataframe de estadísticas para forzar su redibujo
     st.session_state.stats_dataframe_key += 1
-
+    # Reinicia las claves de los widgets de filtro para que se limpien
+    st.session_state.filter_text_key += 1
+    st.session_state.filter_select_key += 1
+    st.session_state.search_term = "" # Limpiar el término de búsqueda
+    st.session_state.search_criterion = "Numero de Factura" # Restablecer el criterio de búsqueda
+    st.rerun() # Forzar un re-run para aplicar los cambios
 
 def export_df_to_csv(df):
     csv = df.to_csv(index=False).encode('utf-8')
