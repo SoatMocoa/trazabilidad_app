@@ -4,6 +4,10 @@ from psycopg2 import Error # Importar la clase Error para manejar excepciones de
 from datetime import datetime # Necesario para guardar_factura_reemplazo
 import time # Importar la librería time para depuración de tiempos
 
+# --- PRUEBA DE LOG: ESTA LÍNEA DEBE APARECER EN TU TERMINAL SI EL ARCHIVO SE ESTÁ EJECUTANDO ---
+print("DEBUG: database_operations.py se está cargando y ejecutando.")
+# --- FIN PRUEBA DE LOG ---
+
 # --- Funciones de Conexión a la Base de Datos ---
 
 def get_db_connection():
@@ -548,14 +552,10 @@ def cargar_facturas(search_term=None, search_column=None):
             # NO USAR ESTO EN PRODUCCIÓN CON ENTRADAS DE USUARIO DIRECTAS POR RIESGO DE INYECCIÓN SQL
             debug_query_with_params = query
             if params:
-                for p in params:
-                    # Reemplazar %s con el parámetro real, manejando cadenas con comillas
-                    if isinstance(p, str):
-                        # Escapar comillas simples dentro de la cadena para la visualización
-                        escaped_p = p.replace("'", "''")
-                        debug_query_with_params = debug_query_with_params.replace("%s", f"'{escaped_p}'", 1)
-                    else:
-                        debug_query_with_params = debug_query_with_params.replace("%s", str(p), 1)
+                # Create a temporary list of parameters to safely replace placeholders for printing
+                temp_params_for_debug = [f"'{p.replace("'", "''")}'" if isinstance(p, str) else str(p) for p in params]
+                # Replace %s placeholders with formatted parameters
+                debug_query_with_params = debug_query_with_params % tuple(temp_params_for_debug)
             print(f"DEBUG (DB - FILTRO): Consulta con parámetros (solo para depuración visual): {debug_query_with_params}\n")
             # --- FIN DEBUGGING ---
 
