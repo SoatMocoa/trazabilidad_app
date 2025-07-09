@@ -707,3 +707,41 @@ def obtener_conteo_total_facturas():
             if conn:
                 conn.close()
     return 0
+
+def obtener_facturadores_unicos():
+    """
+    Obtiene una lista de todos los facturadores únicos de la tabla facturas.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT facturador FROM facturas WHERE facturador IS NOT NULL ORDER BY facturador;")
+            facturadores = [row[0] for row in cursor.fetchall()]
+            return facturadores
+        except Error as e:
+            print(f"Error al obtener facturadores únicos: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
+
+def obtener_eps_unicas():
+    """
+    Obtiene una lista de todas las EPS únicas de la tabla facturas.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT eps FROM facturas WHERE eps IS NOT NULL ORDER BY eps;")
+            epss = [row[0] for row in cursor.fetchall()]
+            return epss
+        except Error as e:
+            print(f"Error al obtener EPS únicas: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    return []
