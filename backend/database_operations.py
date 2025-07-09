@@ -531,9 +531,11 @@ def cargar_facturas(search_term=None, search_column=None):
             """
             params = []
             if search_term and search_column:
+                # Asegurarse de que search_term no tenga espacios en blanco al inicio/final
+                clean_search_term = search_term.strip()
                 # Usar ILIKE para búsqueda insensible a mayúsculas/minúsculas en PostgreSQL
                 query += f" WHERE {search_column} ILIKE %s"
-                params.append(f"%{search_term}%")
+                params.append(f"%{clean_search_term}%")
             
             # Ordenar por id descendente para ver las más recientes primero
             query += " ORDER BY f.id DESC;"
@@ -541,6 +543,20 @@ def cargar_facturas(search_term=None, search_column=None):
             # --- DEBUGGING: Imprimir la consulta SQL y los parámetros ---
             print(f"\nDEBUG (DB - FILTRO): Ejecutando consulta: {query}")
             print(f"DEBUG (DB - FILTRO): Con parámetros: {params}\n")
+
+            # Para depuración visual SOLAMENTE: Imprimir la consulta con parámetros sustituidos
+            # NO USAR ESTO EN PRODUCCIÓN CON ENTRADAS DE USUARIO DIRECTAS POR RIESGO DE INYECCIÓN SQL
+            debug_query_with_params = query
+            if params:
+                for p in params:
+                    # Reemplazar %s con el parámetro real, manejando cadenas con comillas
+                    if isinstance(p, str):
+                        # Escapar comillas simples dentro de la cadena para la visualización
+                        escaped_p = p.replace("'", "''")
+                        debug_query_with_params = debug_query_with_params.replace("%s", f"'{escaped_p}'", 1)
+                    else:
+                        debug_query_with_params = debug_query_with_params.replace("%s", str(p), 1)
+            print(f"DEBUG (DB - FILTRO): Consulta con parámetros (solo para depuración visual): {debug_query_with_params}\n")
             # --- FIN DEBUGGING ---
 
             cursor.execute(query, tuple(params))
