@@ -424,22 +424,33 @@ def highlight_rows(row):
 def display_invoice_table(user_role):
     col_search, col_criteria = st.columns([3, 2])
     with col_search:
+        # Mantener el valor del campo de búsqueda en session_state
+        if 'search_term' not in st.session_state:
+            st.session_state.search_term = ""
         search_term_input = st.text_input(
             "Buscar:",
-            value="",
+            value=st.session_state.search_term, # Leer el valor de session_state
             key=f"search_input_widget_{st.session_state.filter_text_key}"
         )
+        # Actualizar session_state cuando el usuario escribe
+        st.session_state.search_term = search_term_input
+
     with col_criteria:
+        # Mantener el valor del selectbox de criterio de búsqueda en session_state
+        if 'search_criterion' not in st.session_state:
+            st.session_state.search_criterion = "Numero de Factura"
         options_criteria = ["Numero de Factura", "Legalizador", "EPS", "Area de Servicio", "Estado Auditoria"]
         search_criterion_selectbox = st.selectbox(
             "Buscar por:",
             options=options_criteria,
-            index=0,
+            index=options_criteria.index(st.session_state.search_criterion), # Leer el índice de session_state
             key=f"search_criteria_widget_{st.session_state.filter_select_key}"
         )
+        # Actualizar session_state cuando el usuario selecciona
+        st.session_state.search_criterion = search_criterion_selectbox
     
-    current_search_term = st.session_state.get(f'search_input_widget_{st.session_state.filter_text_key}', '').strip()
-    current_search_criterion = st.session_state.get(f'search_criteria_widget_{st.session_state.filter_select_key}', 'Numero de Factura')
+    current_search_term = st.session_state.search_term # Usar el valor directo de session_state
+    current_search_criterion = st.session_state.search_criterion # Usar el valor directo de session_state
 
     db_column_name = {
         "Numero de Factura": "numero_factura",
@@ -872,9 +883,9 @@ def cancelar_edicion_action():
         st.session_state.confirm_delete_id = None
     # Incrementa la clave del number_input para forzar su reseteo
     st.session_state.selected_invoice_input_key += 1
-    # Incrementa las claves de los widgets de filtro para forzar su reseteo
-    st.session_state.filter_text_key += 1
-    st.session_state.filter_select_key += 1
+    # NO incrementar las claves de los widgets de filtro para que mantengan su estado
+    # st.session_state.filter_text_key += 1
+    # st.session_state.filter_select_key += 1
     # Incrementa la clave del dataframe principal para forzar su redibujo
     st.session_state.dataframe_key += 1
     # Incrementa la clave del dataframe de estadísticas para forzar su redibujo
