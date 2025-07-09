@@ -281,6 +281,7 @@ def display_invoice_entry_form(user_role):
         with col2:
             if st.session_state.edit_mode or st.session_state.refacturar_mode:
                 if st.form_submit_button("Cancelar Edicion"):
+                    # Este botón siempre resetea todo, incluyendo el filtro
                     cancelar_edicion_action()
                     st.rerun()
 
@@ -302,7 +303,8 @@ def display_invoice_entry_form(user_role):
                                           fecha_generacion, eps, estado_auditoria, observacion_auditor, tipo_error)
             else:
                 guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
-            st.rerun()
+            # st.rerun() se llama dentro de las funciones de acción ahora para mantener el filtro
+            # ya no se necesita aquí.
 
 def display_bulk_load_section():
     with st.form("bulk_load_form"):
@@ -431,26 +433,30 @@ def display_invoice_table(user_role):
     with st.form(key=f"filter_form_{st.session_state.filter_text_key}"):
         col_search, col_criteria = st.columns([3, 2])
         with col_search:
+            # El valor del text_input se leerá directamente en st.session_state.search_term
+            # cuando el formulario sea enviado.
             search_term_input = st.text_input(
                 "Buscar:",
                 value=st.session_state.search_term, # Leer el valor de session_state
                 key=f"search_input_widget_{st.session_state.filter_text_key}",
-                on_change=lambda: st.session_state.update(search_term=st.session_state[f"search_input_widget_{st.session_state.filter_text_key}"])
             )
-            # Actualizar session_state cuando el usuario escribe (ya se hace con on_change)
-            # st.session_state.search_term = search_term_input # No es necesario si usamos on_change
+            # Actualizar session_state con el valor actual del widget.
+            # Esto se ejecutará en cada rerun, manteniendo el valor del input.
+            st.session_state.search_term = search_term_input
 
         with col_criteria:
             options_criteria = ["Numero de Factura", "Legalizador", "EPS", "Area de Servicio", "Estado Auditoria"]
+            # El valor del selectbox se leerá directamente en st.session_state.search_criterion
+            # cuando el formulario sea enviado.
             search_criterion_selectbox = st.selectbox(
                 "Buscar por:",
                 options=options_criteria,
                 index=options_criteria.index(st.session_state.search_criterion), # Leer el índice de session_state
                 key=f"search_criteria_widget_{st.session_state.filter_select_key}",
-                on_change=lambda: st.session_state.update(search_criterion=st.session_state[f"search_criteria_widget_{st.session_state.filter_select_key}"])
             )
-            # Actualizar session_state cuando el usuario selecciona (ya se hace con on_change)
-            # st.session_state.search_criterion = search_criterion_selectbox # No es necesario si usamos on_change
+            # Actualizar session_state con el valor actual del widget.
+            # Esto se ejecutará en cada rerun, manteniendo el valor del selectbox.
+            st.session_state.search_criterion = search_criterion_selectbox
         
         # Botones de acción del filtro dentro del formulario
         col_buttons = st.columns([1, 1, 1])
@@ -461,8 +467,10 @@ def display_invoice_table(user_role):
 
     # Lógica para aplicar o limpiar el filtro
     if submitted_filter:
-        # El on_change de los widgets ya actualizó session_state
-        pass # No necesitamos hacer nada aquí, el resto del script se ejecutará con los nuevos valores
+        # Los valores de search_term y search_criterion ya están actualizados en session_state
+        # debido a que se asignan directamente desde los widgets después de cada rerun.
+        # No se necesita lógica adicional aquí, el resto del script se ejecutará con los nuevos valores.
+        pass
     elif clear_filter_button:
         st.session_state.search_term = ""
         st.session_state.search_criterion = "Numero de Factura"
@@ -654,14 +662,14 @@ def display_invoice_table(user_role):
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
                         auditar_factura_action(selected_invoice_id, estado_auditoria_input, observacion_auditor_input, tipo_error_input)
-                        st.rerun() # Rerun after audit to refresh table and clear state
+                        # No se llama a st.rerun() aquí, ya que auditar_factura_action lo hace.
 
                 fecha_entrega_radicador_val = st.session_state.current_invoice_data[20] if st.session_state.current_invoice_data else None
                 fecha_entrega_radicador_checked = st.checkbox("Factura Entregada al Radicador", value=bool(fecha_entrega_radicador_val), key=f"radicador_checkbox_{selected_invoice_id}")
                 
                 if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
                     actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
-                    st.rerun() # Rerun after update to refresh table
+                    # No se llama a st.rerun() aquí, ya que actualizar_fecha_entrega_radicador_action lo hace.
 
                 # Logic for delete button and confirmation
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):
@@ -678,10 +686,11 @@ def display_invoice_table(user_role):
                             if success:
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None # Clear confirmation state
-                                cancelar_edicion_action() # Reset form state and trigger rerun
+                                # No se llama a cancelar_edicion_action() aquí, se llama directamente a st.rerun() para mantener el filtro.
+                                st.rerun()
                             else:
                                 st.error("No se pudo eliminar la factura.")
-                            st.rerun() # Rerun to refresh table after action
+                            # st.rerun() # Rerun to refresh table after action (already done above)
                     with col_cancel_del:
                         if st.button("Cancelar", key="cancel_delete_button_modal"):
                             st.info("Eliminación cancelada.")
@@ -693,6 +702,44 @@ def display_invoice_table(user_role):
 
 
 # --- Acciones de la aplicacion ---
+
+def _clear_input_form_fields():
+    """Limpia solo los campos de entrada del formulario, sin afectar el filtro."""
+    # Habilitar los campos para limpiar si estaban deshabilitados por modo edición/refacturar
+    st.session_state[f"search_input_widget_{st.session_state.filter_text_key}"] = ""
+    st.session_state[f"search_criteria_widget_{st.session_state.filter_select_key}"] = "" # Esto no limpia el selectbox, solo el valor
+    
+    # Para limpiar los selectbox, necesitamos resetear su clave o su valor por defecto
+    # La forma más sencilla es que el `st.rerun()` se encargue de ello,
+    # pero para los campos de texto, podemos forzar el valor.
+    # Los selectbox se resetearán al valor por defecto al rerenderizar la página si no se especifica un index.
+    
+    # Resetear los campos del formulario de entrada individual
+    st.session_state.form_key += 1 # Incrementa la clave del formulario para forzar su reseteo
+    st.session_state.editing_factura_id = None
+    st.session_state.edit_mode = False
+    st.session_state.refacturar_mode = False
+    st.session_state.current_invoice_data = None
+
+    # Limpiar campos de auditoría (si están visibles)
+    # No se puede acceder directamente a los widgets de la misma manera que en Tkinter.
+    # Para resetear los widgets de auditoría y el checkbox de radicador,
+    # la forma más efectiva es que la lógica de `display_invoice_entry_form`
+    # los inicialice correctamente cuando `st.session_state.current_invoice_data` es `None`.
+    # Esto ya se maneja en el código existente.
+    
+    # Desmarcar el checkbox de entrega al radicador
+    # st.session_state.radicador_checkbox_key += 1 # Esto sería si el checkbox tuviera una clave dinámica propia
+    # Como el checkbox usa `fecha_entrega_radicador_var`, su estado se reseteará si `current_invoice_data` es `None`
+    # y si la lógica de `display_invoice_entry_form` lo maneja.
+
+    # Limpiar el estado de confirmación de eliminación
+    if 'confirm_delete_id' in st.session_state:
+        st.session_state.confirm_delete_id = None
+    # Incrementa la clave del number_input para forzar su reseteo
+    st.session_state.selected_invoice_input_key += 1
+    # No resetear las claves de filtro aquí, ya que queremos mantener el filtro.
+
 
 def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str, area_servicio):
     if not all([facturador, eps, numero_factura, fecha_generacion_str, area_servicio]):
@@ -725,7 +772,8 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
-        cancelar_edicion_action()
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error(f"La factura con numero '{numero_factura}' ya existe.")
 
@@ -773,7 +821,8 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
 
     if success:
         st.success("Factura actualizada correctamente.")
-        cancelar_edicion_action()
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error(f"No se pudo actualizar la factura. El numero de factura '{numero_factura}' ya podria existir.")
 
@@ -819,7 +868,8 @@ def auditar_factura_action(factura_id, nuevo_estado_auditoria, observacion, tipo
 
     if success:
         st.success(f"Estado de auditoria de factura actualizado a '{nuevo_estado_auditoria}'.")
-        cancelar_edicion_action() # Reset state and trigger rerun
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error("No se pudo actualizar el estado de auditoria de la factura.")
 
@@ -829,7 +879,14 @@ def eliminar_factura_action(factura_id):
         return False
     
     success = db_ops.eliminar_factura(factura_id)
-    return success
+    if success:
+        st.success(f"Factura ID: {factura_id} eliminada correctamente.")
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
+        return True
+    else:
+        st.error("No se pudo eliminar la factura.")
+        return False
 
 def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_reemplazo_factura_str,
                                      facturador, eps, area_servicio):
@@ -867,14 +924,19 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     new_fecha_generacion_automatica = datetime.now().strftime('%Y-%m-%d')
 
     success = db_ops.guardar_factura_reemplazo(
-        old_factura_id, new_numero_factura, new_fecha_generacion_automatica,
-        factura_original_data[2], factura_original_data[3], factura_original_data[5],
+        old_factura_id,
+        new_numero_factura,
+        new_fecha_generacion_automatica, # Fecha de generación de la nueva factura (automática)
+        factura_original_data[2],
+        factura_original_data[3],
+        factura_original_data[5],
         fecha_reemplazo_db
     )
 
     if success:
         st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
-        cancelar_edicion_action()
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error(f"No se pudo guardar la factura de reemplazo. El numero '{new_numero_factura}' ya podria existir.")
 
@@ -888,7 +950,8 @@ def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actu
     )
     if success:
         st.success(f"Factura ID: {factura_id} marcada como 'Corregida por Legalizador'.")
-        cancelar_edicion_action()
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error("No se pudo marcar la factura como corregida.")
 
@@ -897,11 +960,16 @@ def actualizar_fecha_entrega_radicador_action(factura_id, set_date):
     success = db_ops.actualizar_fecha_entrega_radicador(factura_id, fecha_entrega)
     if success:
         st.success("Fecha de entrega al radicador actualizada correctamente.")
-        cancelar_edicion_action() # Reset state and trigger rerun
+        _clear_input_form_fields() # Limpia solo los campos del formulario
+        st.rerun() # Refresca la página manteniendo el filtro
     else:
         st.error("No se pudo actualizar la fecha de entrega al radicador.")
 
 def cancelar_edicion_action():
+    """
+    Restablece el formulario y sale del modo edición/refacturación,
+    restaurando el estado de "Guardar Factura" y también REINICIA EL FILTRO.
+    """
     st.session_state.editing_factura_id = None
     st.session_state.edit_mode = False
     st.session_state.refacturar_mode = False
