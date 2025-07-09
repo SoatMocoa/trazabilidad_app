@@ -47,18 +47,76 @@ def calcular_dias_habiles_entre_fechas(fecha_inicio_obj, fecha_fin_obj):
 
 # --- Listas de opciones ---
 FACTURADORES = sorted(list(set([
-    "GLORIA SULEIMA ACOSTA", "JHONNY ALEXANDER AYALA", "DIANA MILENA TELLEZ",
-    "DANY ALEXANDER MORENO", "GEAN CARLOS VITERY", "MAROLYN ALEJANDRA BURBANO",
-    "LEYDY JOHANA CARDENAS", "SHANNYA MARY CHAMORRO", "OLGA LUCY NARVAEZ",
-    "CRISTIAN DUVAN SAAVEDRA", "SOL BURBANO", "ANLLY YULIED HERNANDEZ",
-    "CLAUDIA GARZON", "ANGELA CATHERIN NOVA MORA", "ROSA JOHANNA ROMERO",
-    "MARCELA MONTEZUMA"
+    "ALEJANDRA BRAVO",
+    "ALEJANDRA BURBANO",
+    "ALEXIS ERAZO",
+    "ANLLY HERNANDEZ",
+    "BREYNER TEZ",
+    "CAMILA IMBACHI",
+    "CHATERIN NOVA",
+    "CRISTIAN SAAVEDRA",
+    "DANIEL DORADO",
+    "DANY MORENO",
+    "DIANA TELLEZ",
+    "EMICEL RODRIGUEZ",
+    "FERNEY PULICHE",
+    "GEAN VITERY",
+    "GIOVANY PAZ",
+    "JHOANA CARDENAS",
+    "JHONY AYALA",
+    "JUAN CUANTINDIOY",
+    "JULIANA ARCINIEGAS",
+    "LUCERO ESTRELLA",
+    "LUCY MONTEZUMA",
+    "LUISA OTALVARO",
+    "LUZ TOBON",
+    "MARGY POZO",
+    "MARIA CASANOVA",
+    "MARI CHAMORRO",
+    "MARISOL BURGOS",
+    "MAURICIO BURGOS",
+    "MONICA CARVAJAL",
+    "MONICA NASTACUAS",
+    "NATALI LUCERO",
+    "NICOLAS LEDESMA",
+    "OSCAR MAYA",
+    "ROSA ROMERO",
+    "SOL BURBANO",
+    "VIVIANA ROMO",
+    "YESICA REVELO",
+    "YINETH CLAROS",
+    "YULLY GRIJALBA"
 ])))
 
 EPS_OPCIONES = sorted(list(set([
-    "EMSSANAR", "NUEVA EPS", "MALLAMAS", "EJERCITO", "POLICIA",
-    "FIDEICOMISOS", "SCRT. DE SALUD", "ASMET SALUD", "OTRAS EPS",
-    "FAMILIAR DE COLOMBIA", "AIC"
+    "ADRES",
+    "ASMET SALUD EPS SAS",
+    "ASOCIACION MUTUAL SER",
+    "AXA COLPATRIA SEGUROS DE VIDA S A ARL",
+    "AXA COLPATRIA SEGUROS SA",
+    "CAJACOPI EPS S.A.S",
+    "COLMEDICA MEDICINA PREPAGADA",
+    "EMSSANAR E.P.S S.A.S.",
+    "ENTIDAD PROMOTORA DE SALUD FAMISANAR SA S",
+    "ENTIDAD PROMOTORA DE SALUD SERVICIO OCCIDENTAL DE SALUD S.A. S.O.S.",
+    "ESM BATALLON DE ASPC NO 12 GR FERNANDO SERRANO",
+    "EPS FAMILIAR DE COLOMBIA S.A.S.",
+    "EPS SANITAS S.A",
+    "FIDEICOMISOS PATRIMONIOS AUTONOMOS FIDUCIARIA LA PREVISORA S.A.",
+    "LA EQUIDAD SEGUROS SOAT",
+    "LA PREVISORA SA COMPANIA DE SEGUROS",
+    "MALLAMAS EPS",
+    "MUNDIAL DE SEGUROS",
+    "NUEVA EPS",
+    "REGIONAL DE ASEGURAMIENTO EN SALUD NO 2",
+    "SALUD TOTAL SA EPS ARS",
+    "SAVIA SALUD EPS",
+    "SEGUROS COMERCIALES BOLIVAR",
+    "SEGUROS DE VIDA DEL ESTADO",
+    "SEGUROS DE VIDA SURAMERICANA S.A",
+    "SEGUROS DEL ESTADO",
+    "SRIA DE SALUD DPTAL DEL PTYO",
+    "SURA"
 ])))
 
 AREA_SERVICIO_OPCIONES = ["SOAT", "Consulta Externa", "Urgencias", "Hospitalizacion", "Vacunacion"]
@@ -67,9 +125,19 @@ ESTADO_AUDITORIA_OPCIONES = ["Pendiente", "Radicada OK", "Devuelta por Auditor",
 
 TIPO_ERROR_OPCIONES = [
     "",
-    "ERROR EN EL CONTRATO", "ERROR EN AUTORIZACION", "ERROR POR NO VALIDACION ANTE SISPRO",
-    "ERROR CUFE DIAN", "ERROR EN LOS SERVICIOS", "ERROR CODIGOS CUPS",
-    "ERROR SOPORTES ERRONEOS"
+    "ERROR DE FACTURACION",
+    "TARIFA",
+    "FIRMAS",
+    "SOPORTES",
+    "ERROR CONTRATO",
+    "ERROR CRC",
+    "SOPORTES NO COINCIDEN",
+    "SOPORTES DE AUTORIZACION",
+    "CODIGO DE AUTORIZACION",
+    "SIN CARPETA",
+    "REFACTURAR",
+    "CORREGIR NOMBRES DE USUARIO",
+    "AUTORIZACION EN LA FACTURA"
 ]
 
 # --- Funciones de la aplicación Streamlit ---
@@ -523,8 +591,8 @@ def display_invoice_table(user_role):
                     tipo_error_input = st.selectbox("Tipo de Error:", options=TIPO_ERROR_OPCIONES,
                                                     index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
                     observacion_auditor_input = st.text_area("Observacion Auditor:",
-                                                             value=st.session_state.current_invoice_data[15] if st.session_state.current_invoice_data and st.session_state.current_invoice_data[15] else "",
-                                                             key=f"observacion_auditor_{selected_invoice_id}")
+                                                              value=st.session_state.current_invoice_data[15] if st.session_state.current_invoice_data and st.session_state.current_invoice_data[15] else "",
+                                                              key=f"observacion_auditor_{selected_invoice_id}")
                     
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
@@ -643,8 +711,8 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
 
     success = db_ops.actualizar_factura(
         factura_id, numero_factura, area_servicio, facturador, fecha_generacion_db, eps,
-        original_data[6], original_data[7], original_data[8], original_data[9], original_data[10],
-        original_data[11], original_data[12], original_data[13], estado_auditoria_to_save,
+        original_data[6], original_data[7], original_data[8],
+        original_data[9], original_data[10], original_data[11], original_data[12], original_data[13], estado_auditoria_to_save,
         observacion_auditor_to_save, tipo_error_to_save, original_data[17]
     )
 
