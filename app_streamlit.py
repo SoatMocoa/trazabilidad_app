@@ -452,11 +452,6 @@ def display_invoice_table(user_role):
     current_search_term = st.session_state.search_term # Usar el valor directo de session_state
     current_search_criterion = st.session_state.search_criterion # Usar el valor directo de session_state
 
-    # --- DEBUGGING: Mostrar los valores del filtro en la UI ---
-    st.write(f"DEBUG: Término de búsqueda actual: '{current_search_term}'")
-    st.write(f"DEBUG: Criterio de búsqueda actual: '{current_search_criterion}'")
-    # --- FIN DEBUGGING ---
-
     db_column_name = {
         "Numero de Factura": "numero_factura",
         "Legalizador": "facturador",
@@ -470,10 +465,6 @@ def display_invoice_table(user_role):
         search_column=db_column_name
     )
     
-    # --- DEBUGGING: Mostrar cuántas facturas se obtuvieron ---
-    st.write(f"DEBUG: Número de facturas obtenidas de la DB: {len(facturas_raw)}")
-    # --- FIN DEBUGGING ---
-
     processed_facturas = []
     hoy_obj = datetime.now().date()
 
