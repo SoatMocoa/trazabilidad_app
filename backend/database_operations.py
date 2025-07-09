@@ -318,10 +318,40 @@ def obtener_factura_por_id(factura_id):
                 conn.close()
     return None
 
+def obtener_detalles_soat_por_factura_id(factura_id):
+    """
+    Obtiene los detalles SOAT para una factura específica por su factura_id.
+    Retorna una tupla (id, factura_id, fecha_generacion_soat) o None si no se encuentran detalles.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            start_time = time.time()
+            cursor.execute("""
+                SELECT
+                    id, factura_id, fecha_generacion_soat
+                FROM
+                    detalles_soat
+                WHERE
+                    factura_id = %s;
+            """, (factura_id,))
+            soat_details = cursor.fetchone()
+            end_time = time.time()
+            print(f"DEBUG: Obtener detalles SOAT por factura ID en {end_time - start_time:.4f} segundos.")
+            return soat_details
+        except Error as e:
+            print(f"Error al obtener detalles SOAT por factura ID: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+    return None
+
 def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                       fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
-                       fecha_devolucion_lider, revisado, factura_original_id, estado,
-                       reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
+                         fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                         fecha_devolucion_lider, revisado, factura_original_id, estado,
+                         reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
     """
     Actualiza una factura existente en la base de datos.
     Retorna True si la actualización fue exitosa, False en caso contrario.

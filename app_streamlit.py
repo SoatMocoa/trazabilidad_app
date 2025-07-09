@@ -249,7 +249,7 @@ def display_invoice_entry_form(user_role):
             st.subheader("Datos de Refacturacion")
             new_numero_factura = st.text_input("Nuevo Numero de Factura:")
             fecha_reemplazo_factura = st.text_input("Fecha Reemplazo Factura (YYYY-MM-DD o DD/MM/YYYY):",
-                                                    value=st.session_state.current_invoice_data[4] if st.session_state.current_invoice_data else "")
+                                                     value=st.session_state.current_invoice_data[4] if st.session_state.current_invoice_data else "")
         else:
             new_numero_factura = None
             fecha_reemplazo_factura = None
@@ -288,7 +288,7 @@ def display_invoice_entry_form(user_role):
                     tipo_error = None
                 
                 actualizar_factura_action(st.session_state.editing_factura_id, numero_factura, area_servicio, facturador,
-                                          fecha_generacion, eps, estado_auditoria, observacion_auditor, tipo_error)
+                                         fecha_generacion, eps, estado_auditoria, observacion_auditor, tipo_error)
             else:
                 guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
             st.rerun()
@@ -366,6 +366,27 @@ def display_bulk_load_section():
             st.rerun()
 
 def display_statistics():
+    # Nuevas estadísticas requeridas
+    st.subheader("Estadísticas Generales de Facturas")
+    col_radicadas, col_errores, col_pendientes, col_total = st.columns(4)
+
+    total_radicadas = db_ops.obtener_conteo_facturas_radicadas_ok()
+    total_errores = db_ops.obtener_conteo_facturas_con_errores()
+    total_pendientes = db_ops.obtener_conteo_facturas_pendientes_global()
+    total_general = db_ops.obtener_conteo_total_facturas()
+
+    with col_radicadas:
+        st.metric(label="Facturas Radicadas (OK)", value=total_radicadas)
+    with col_errores:
+        st.metric(label="Facturas con Errores", value=total_errores)
+    with col_pendientes:
+        st.metric(label="Facturas Pendientes", value=total_pendientes)
+    with col_total:
+        st.metric(label="Total General de Facturas", value=total_general)
+
+    st.markdown("---") # Separador visual
+
+    st.subheader("Conteo por Legalizador y EPS (Facturas Pendientes)")
     stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps() # Llamada a la función actualizada
     if stats:
         df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"]) # Columnas actualizadas
@@ -530,7 +551,7 @@ def display_invoice_table(user_role):
                 return 3
             else:
                 return 4
-        
+            
         df_facturas['sort_key'] = df_facturas.apply(get_sort_key, axis=1)
         df_facturas = df_facturas.sort_values(by=['sort_key', 'Fecha Generacion'], ascending=[True, False])
         df_facturas = df_facturas.drop(columns=['sort_key'])
@@ -675,7 +696,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         st.error(f"La factura con numero '{numero_factura}' ya existe.")
 
 def actualizar_factura_action(factura_id, numero_factura, area_servicio, facturador,
-                              fecha_generacion_str, eps, estado_auditoria, observacion_auditor, tipo_error):
+                             fecha_generacion_str, eps, estado_auditoria, observacion_auditor, tipo_error):
     if not all([factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps]):
         st.error("Todos los campos son obligatorios para la actualizacion.")
         return
