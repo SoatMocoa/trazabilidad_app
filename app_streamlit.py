@@ -383,9 +383,9 @@ def display_statistics():
 
     st.markdown("---") # Separador
 
-    # Nuevas estadísticas globales
-    st.subheader("Estadísticas Globales de Facturas")
-    col1, col2, col3, col4 = st.columns(4) # Aumentar a 4 columnas para el total
+    # Estadísticas globales por estado de auditoría
+    st.subheader("Estadísticas Globales de Facturas por Estado de Auditoría")
+    col1, col2, col3 = st.columns(3) # Se reducen a 3 columnas para los estados individuales
 
     with col1:
         total_radicadas_ok = db_ops.obtener_conteo_facturas_radicadas_ok()
@@ -396,19 +396,13 @@ def display_statistics():
         st.metric(label="Facturas con Errores", value=total_con_errores)
 
     with col3:
-        total_pendientes_global = db_ops.obtener_conteo_facturas_pendientes_global() # Nueva métrica
-        st.metric(label="Facturas Pendientes (Global)", value=total_pendientes_global)
+        total_pendientes_global = db_ops.obtener_conteo_facturas_pendientes_global()
+        st.metric(label="Facturas Pendientes", value=total_pendientes_global)
 
-    with col4:
-        # Calcular el total de las tres categorías
-        total_de_estas = total_radicadas_ok + total_con_errores + total_pendientes_global
-        st.metric(label="Total de Radicadas OK, Errores y Pendientes", value=total_de_estas)
-
-    # El "Total Facturas Cargadas" se mantiene como una métrica separada,
-    # que debería coincidir con 'total_de_estas' si todos los estados están cubiertos.
     st.markdown("---")
     st.subheader("Total General")
-    total_facturas_cargadas = db_ops.obtener_conteo_total_facturas()
+    # Se utiliza la función obtener_conteo_total_facturas() para el total general
+    total_facturas_cargadas = db_ops.obtener_conteo_total_facturas() 
     st.metric(label="Total Facturas Cargadas en Trazabilidad", value=total_facturas_cargadas)
 
 
