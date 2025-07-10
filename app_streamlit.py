@@ -249,7 +249,7 @@ def display_invoice_entry_form(user_role):
             st.subheader("Datos de Refacturacion")
             new_numero_factura = st.text_input("Nuevo Numero de Factura:")
             fecha_reemplazo_factura = st.text_input("Fecha Reemplazo Factura (YYYY-MM-DD o DD/MM/YYYY):",
-                                                     value=st.session_state.current_invoice_data[4] if st.session_state.current_invoice_data else "")
+                                                    value=st.session_state.current_invoice_data[4] if st.session_state.current_invoice_data else "")
         else:
             new_numero_factura = None
             fecha_reemplazo_factura = None
@@ -288,7 +288,7 @@ def display_invoice_entry_form(user_role):
                     tipo_error = None
                 
                 actualizar_factura_action(st.session_state.editing_factura_id, numero_factura, area_servicio, facturador,
-                                         fecha_generacion, eps, estado_auditoria, observacion_auditor, tipo_error)
+                                          fecha_generacion, eps, estado_auditoria, observacion_auditor, tipo_error)
             else:
                 guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
             st.rerun()
@@ -390,7 +390,7 @@ def display_statistics():
     stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps() # Llamada a la función actualizada
     if stats:
         df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"]) # Columnas actualizadas
-        st.dataframe(df_stats, use_container_width=True)
+        st.dataframe(df_stats, use_container_width=True, hide_index=True) # MODIFICACIÓN: use_container_width=True
     else:
         st.info("No hay estadisticas disponibles de facturas pendientes.")
 
@@ -503,7 +503,7 @@ def display_invoice_table(user_role):
             display_numero_factura_col = num_fact_original_linked
             display_numero_reemplazo_col = numero_factura_base
             display_fecha_generacion_actual_col = fecha_gen_original_linked_str
-            display_fecha_reemplazo_display = fecha_generacion_base_str
+            display_fecha_reemplazo_display = fecha_gen_original_linked_str # Esto debería ser la fecha de la nueva factura
         elif estado_factura == 'Reemplazada':
             display_numero_factura_col = numero_factura_base
             display_numero_reemplazo_col = reemplazada_por_numero
@@ -556,7 +556,7 @@ def display_invoice_table(user_role):
         df_facturas = df_facturas.sort_values(by=['sort_key', 'Fecha Generacion'], ascending=[True, False])
         df_facturas = df_facturas.drop(columns=['sort_key'])
 
-        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
+        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True) # MODIFICACIÓN: use_container_width=True
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
@@ -610,7 +610,7 @@ def display_invoice_table(user_role):
                     estado_auditoria_input = st.selectbox("Estado Auditoria:", options=ESTADO_AUDITORIA_OPCIONES,
                                                           index=estado_auditoria_default_index, key=f"estado_auditoria_{selected_invoice_id}")
                     tipo_error_input = st.selectbox("Tipo de Error:", options=TIPO_ERROR_OPCIONES,
-                                                    index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
+                                                     index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
                     observacion_auditor_input = st.text_area("Observacion Auditor:",
                                                               value=st.session_state.current_invoice_data[15] if st.session_state.current_invoice_data and st.session_state.current_invoice_data[15] else "",
                                                               key=f"observacion_auditor_{selected_invoice_id}")
@@ -881,7 +881,7 @@ def cancelar_edicion_action():
     # Limpia el estado de confirmación de eliminación
     if 'confirm_delete_id' in st.session_state:
         st.session_state.confirm_delete_id = None
-    # Incrementa la clave del number_input para forzar su reseteo
+    # Incrementa el selected_invoice_input_key para forzar el reseteo del number_input
     st.session_state.selected_invoice_input_key += 1
     # Incrementa las claves de los widgets de filtro para forzar su reseteo
     st.session_state.filter_text_key += 1
