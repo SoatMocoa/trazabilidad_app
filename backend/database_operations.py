@@ -260,41 +260,81 @@ def obtener_detalles_soat_por_factura_id(factura_id):
             if conn: conn.close()
     return None
 
-def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                         fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
-                         fecha_devolucion_lider, revisado, factura_original_id, estado,
-                         reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
+# Esta es la función clave que utilizaremos para "refacturar" actualizando el registro existente
+def actualizar_factura(
+    factura_id,
+    new_numero_factura,
+    new_area_servicio,
+    new_facturador,
+    new_fecha_generacion, # Esta será la fecha que reinicia los 22 días
+    new_eps,
+    new_fecha_hora_entrega, # Puedes poner la fecha actual aquí
+    tiene_correccion=False, # Al refacturar, probablemente queremos resetear estos
+    descripcion_devolucion=None,
+    fecha_devolucion_lider=None,
+    revisado=False,
+    factura_original_id=None, # Si esta factura es la "nueva" versión, no es un reemplazo de otra
+    estado='Activa', # La marcamos como activa de nuevo
+    reemplazada_por_numero_factura=None, # Ya no está reemplazada
+    estado_auditoria='Pendiente', # Estado inicial después de refacturar
+    observacion_auditor=None,
+    tipo_error=None,
+    fecha_reemplazo=None, # Esta es la fecha en que se hizo la refacturación
+    fecha_entrega_radicador=None # Podrías querer resetearla
+):
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
             start_time = time.time()
-            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
-            if cursor.fetchone(): return False
+
+            # Verificar si el NUEVO numero_factura ya existe para OTRA factura (excepto la que estamos actualizando)
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (new_numero_factura, factura_id))
+            if cursor.fetchone():
+                print(f"ADVERTENCIA: El número de factura '{new_numero_factura}' ya existe para otra factura.")
+                return False # Retornar False si el nuevo número ya está en uso por otra factura
+
             cursor.execute("""
                 UPDATE facturas SET
-                    numero_factura = %s, area_servicio = %s, facturador = %s, fecha_generacion = %s, eps = %s,
-                    fecha_hora_entrega = %s, tiene_correccion = %s, descripcion_devolucion = %s,
-                    fecha_devolucion_lider = %s, revisado = %s, factura_original_id = %s, estado = %s,
-                    reemplazada_por_numero_factura = %s, estado_auditoria = %s, observacion_auditor = %s, 
-                    tipo_error = %s, fecha_reemplazo = %s
+                    numero_factura = %s,
+                    area_servicio = %s,
+                    facturador = %s,
+                    fecha_generacion = %s,
+                    eps = %s,
+                    fecha_hora_entrega = %s,
+                    tiene_correccion = %s,
+                    descripcion_devolucion = %s,
+                    fecha_devolucion_lider = %s,
+                    revisado = %s,
+                    factura_original_id = %s,
+                    estado = %s,
+                    reemplazada_por_numero_factura = %s,
+                    estado_auditoria = %s,
+                    observacion_auditor = %s,
+                    tipo_error = %s,
+                    fecha_reemplazo = %s,
+                    fecha_entrega_radicador = %s
                 WHERE id = %s;
-            """, (numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                  fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
-                  fecha_devolucion_lider, revisado, factura_original_id, estado,
-                  reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo,
-                  factura_id))
+            """, (
+                new_numero_factura, new_area_servicio, new_facturador, new_fecha_generacion, new_eps,
+                new_fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                fecha_devolucion_lider, revisado, factura_original_id, estado,
+                reemplazada_por_numero_factura, estado_auditoria, observacion_auditor,
+                tipo_error, fecha_reemplazo, fecha_entrega_radicador,
+                factura_id
+            ))
             conn.commit()
             end_time = time.time()
-            print(f"DEBUG: Actualizar factura en {end_time - start_time:.4f} segundos.")
+            print(f"DEBUG: Factura ID {factura_id} actualizada en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
-            print(f"Error al actualizar factura: {e}")
+            print(f"Error al actualizar factura en la base de datos: {e}")
             if conn: conn.rollback()
             return False
         finally:
             if conn: conn.close()
     return False
+
 
 def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion, tipo_error):
     conn = get_db_connection()
@@ -353,55 +393,6 @@ def eliminar_factura(factura_id):
             return True
         except Error as e:
             print(f"Error al eliminar factura: {e}")
-            if conn: conn.rollback()
-            return False
-        finally:
-            if conn: conn.close()
-    return False
-
-def refacturar_factura(factura_id_a_actualizar, new_numero_factura, new_fecha_generacion,
-                       area_servicio, facturador, eps, fecha_reemplazo):
-    conn = get_db_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            start_time = time.time()
-
-            # 1. Verificar si el nuevo numero_factura ya existe en otra factura (excepto la que estamos actualizando)
-            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;",
-                           (new_numero_factura, factura_id_a_actualizar))
-            if cursor.fetchone():
-                print(f"ADVERTENCIA: El nuevo número de factura '{new_numero_factura}' ya existe para otra factura.")
-                return False # Indica que la actualización falló por duplicado
-
-            # 2. Actualizar el registro de la factura original con los nuevos datos
-            cursor.execute("""
-                UPDATE facturas SET
-                    numero_factura = %s,
-                    area_servicio = %s,
-                    facturador = %s,
-                    fecha_generacion = %s, -- Esta será la nueva fecha que "reinicia" los 22 días
-                    eps = %s,
-                    fecha_hora_entrega = %s, -- Podrías querer resetear esta o dejarla como la fecha actual
-                    estado = 'Activa', -- Marcarla como activa de nuevo
-                    reemplazada_por_numero_factura = NULL, -- Eliminar la referencia a un reemplazo
-                    factura_original_id = NULL, -- Si era un reemplazo, ahora es "nueva"
-                    estado_auditoria = 'Pendiente', -- Reiniciar el estado de auditoría si es necesario
-                    observacion_auditor = NULL,
-                    tipo_error = NULL,
-                    fecha_reemplazo = %s -- La fecha en que se hizo la "refacturación"
-                WHERE id = %s;
-            """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
-                  datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # Puedes decidir si quieres una nueva fecha_hora_entrega
-                  fecha_reemplazo,
-                  factura_id_a_actualizar))
-
-            conn.commit()
-            end_time = time.time()
-            print(f"DEBUG: Factura {factura_id_a_actualizar} refacturada y actualizada en {end_time - start_time:.4f} segundos.")
-            return True
-        except Error as e:
-            print(f"Error al refacturar y actualizar factura: {e}")
             if conn: conn.rollback()
             return False
         finally:
