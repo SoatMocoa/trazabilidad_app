@@ -359,33 +359,49 @@ def eliminar_factura(factura_id):
             if conn: conn.close()
     return False
 
-def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
-                              area_servicio, facturador, eps, fecha_reemplazo):
+def refacturar_factura(factura_id_a_actualizar, new_numero_factura, new_fecha_generacion,
+                       area_servicio, facturador, eps, fecha_reemplazo):
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
             start_time = time.time()
-            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (new_numero_factura,))
-            if cursor.fetchone(): return False
-            cursor.execute("""
-                INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                                      fecha_hora_entrega, factura_original_id, estado)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
-            """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
-                  datetime.now().strftime('%Y-%m-%d %H:%M:%S'), old_factura_id, 'Activa'))
-            new_factura_id = cursor.fetchone()[0]
+
+            # 1. Verificar si el nuevo numero_factura ya existe en otra factura (excepto la que estamos actualizando)
+            cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;",
+                           (new_numero_factura, factura_id_a_actualizar))
+            if cursor.fetchone():
+                print(f"ADVERTENCIA: El nuevo número de factura '{new_numero_factura}' ya existe para otra factura.")
+                return False # Indica que la actualización falló por duplicado
+
+            # 2. Actualizar el registro de la factura original con los nuevos datos
             cursor.execute("""
                 UPDATE facturas SET
-                    estado = 'Reemplazada', reemplazada_por_numero_factura = %s, fecha_reemplazo = %s
+                    numero_factura = %s,
+                    area_servicio = %s,
+                    facturador = %s,
+                    fecha_generacion = %s, -- Esta será la nueva fecha que "reinicia" los 22 días
+                    eps = %s,
+                    fecha_hora_entrega = %s, -- Podrías querer resetear esta o dejarla como la fecha actual
+                    estado = 'Activa', -- Marcarla como activa de nuevo
+                    reemplazada_por_numero_factura = NULL, -- Eliminar la referencia a un reemplazo
+                    factura_original_id = NULL, -- Si era un reemplazo, ahora es "nueva"
+                    estado_auditoria = 'Pendiente', -- Reiniciar el estado de auditoría si es necesario
+                    observacion_auditor = NULL,
+                    tipo_error = NULL,
+                    fecha_reemplazo = %s -- La fecha en que se hizo la "refacturación"
                 WHERE id = %s;
-            """, (new_numero_factura, fecha_reemplazo, old_factura_id))
+            """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
+                  datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # Puedes decidir si quieres una nueva fecha_hora_entrega
+                  fecha_reemplazo,
+                  factura_id_a_actualizar))
+
             conn.commit()
             end_time = time.time()
-            print(f"DEBUG: Guardar factura reemplazo en {end_time - start_time:.4f} segundos.")
+            print(f"DEBUG: Factura {factura_id_a_actualizar} refacturada y actualizada en {end_time - start_time:.4f} segundos.")
             return True
         except Error as e:
-            print(f"Error al guardar factura de reemplazo: {e}")
+            print(f"Error al refacturar y actualizar factura: {e}")
             if conn: conn.rollback()
             return False
         finally:

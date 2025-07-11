@@ -3,9 +3,11 @@ from datetime import datetime, timedelta
 from backend import database_operations as db_ops
 import pandas as pd
 import os
+import sys
 from utils.io_utils import export_df_to_csv
 from dateutil.rrule import rrule, DAILY
 from utils.date_utils import sumar_dias_habiles, calcular_dias_habiles_entre_fechas, parse_date, validate_future_date 
+import services.invoice_service as invoice_service # ¡NUEVO IMPORT!
 from config.constants import (
     FACTURADORES, EPS_OPCIONES, AREA_SERVICIO_OPCIONES,
     ESTADO_AUDITORIA_OPCIONES, TIPO_ERROR_OPCIONES
@@ -89,7 +91,7 @@ def display_invoice_entry_form(user_role):
             fecha_reemplazo_factura = None
         if user_role == 'legalizador' and st.session_state.current_invoice_data and st.session_state.current_invoice_data[14] == 'Devuelta por Auditor':
             if st.form_submit_button("Marcar como Corregida"):
-                marcar_como_corregida_action(st.session_state.editing_factura_id, st.session_state.current_invoice_data[15], st.session_state.current_invoice_data[16])
+                invoice_service.marcar_como_corregida_action(st.session_state.editing_factura_id, st.session_state.current_invoice_data[15], st.session_state.current_invoice_data[16], invalidate_facturas_cache, cancelar_edicion_action)
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state.refacturar_mode: submitted = st.form_submit_button("Guardar Factura Reemplazo")
@@ -102,7 +104,7 @@ def display_invoice_entry_form(user_role):
                     st.rerun()
         if submitted:
             if st.session_state.refacturar_mode:
-                guardar_factura_reemplazo_action(st.session_state.editing_factura_id, new_numero_factura, fecha_reemplazo_factura, facturador, eps, area_servicio)
+                invoice_service.guardar_factura_reemplazo_action(st.session_state.editing_factura_id, new_numero_factura, fecha_reemplazo_factura, invalidate_facturas_cache, cancelar_edicion_action    )
             elif st.session_state.edit_mode:
                 if user_role != 'auditor' and st.session_state.current_invoice_data:
                     estado_auditoria = st.session_state.current_invoice_data[14]
@@ -311,12 +313,12 @@ def display_invoice_table(user_role):
                     observacion_auditor_input = st.text_area("Observacion Auditor:", value=st.session_state.current_invoice_data[15] if st.session_state.current_invoice_data and st.session_state.current_invoice_data[15] else "", key=f"observacion_auditor_{selected_invoice_id}")
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
-                        auditar_factura_action(selected_invoice_id, estado_auditoria_input, observacion_auditor_input, tipo_error_input)
+                        invoice_service.auditar_factura_action(selected_invoice_id, estado_auditoria_input, observacion_auditor_input, tipo_error_input, invalidate_facturas_cache, cancelar_edicion_action)
                         st.rerun()
                 fecha_entrega_radicador_val = st.session_state.current_invoice_data[20] if st.session_state.current_invoice_data else None
                 fecha_entrega_radicador_checked = st.checkbox("Factura Entregada al Radicador", value=bool(fecha_entrega_radicador_val), key=f"radicador_checkbox_{selected_invoice_id}")
                 if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
-                    actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
+                    invoice_service.actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked, invalidate_facturas_cache, cancelar_edicion_action)
                     st.rerun()
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):
                     st.session_state.confirm_delete_id = selected_invoice_id
@@ -325,7 +327,7 @@ def display_invoice_table(user_role):
                     col_confirm_del, col_cancel_del = st.columns(2)
                     with col_confirm_del:
                         if st.button("Confirmar Eliminación", key="confirm_delete_button_modal"):
-                            success = eliminar_factura_action(selected_invoice_id)
+                            success = invoice_service.eliminar_factura_action(selected_invoice_id)
                             if success:
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None 
@@ -355,7 +357,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         return
     fecha_generacion_db = fecha_generacion_obj.strftime('%Y-%m-%d')
     fecha_hora_entrega = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, area_servicio, facturador, fecha_generacion_db, eps, fecha_hora_entrega) # Modificación: orden de argumentos para guardar_factura
+    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, fecha_generacion_db, area_servicio, fecha_hora_entrega)
     if factura_id:
         if area_servicio == "SOAT": db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
@@ -414,73 +416,6 @@ def cargar_factura_para_refacturar_action(factura_id):
         st.session_state.form_key += 1
         st.warning(f"Factura {factura_data[1]} cargada para refacturar. Ingrese el nuevo numero de factura.")
     else: st.error("No se pudo cargar la factura para refacturar.")
-def auditar_factura_action(factura_id, nuevo_estado_auditoria, observacion, tipo_error):
-    if st.session_state.user_role != 'auditor':
-        st.error("Permiso Denegado. Solo los auditores pueden auditar facturas.")
-        return
-    if nuevo_estado_auditoria == "Devuelta por Auditor" and not tipo_error:
-        st.error("Si el estado es 'Devuelta por Auditor', debe especificar el 'Tipo de Error'.")
-        return
-    observacion_to_save = observacion if observacion else None
-    tipo_error_to_save = tipo_error if tipo_error else None
-    success = db_ops.actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion_to_save, tipo_error_to_save)
-    if success:
-        st.success(f"Estado de auditoria de factura actualizado a '{nuevo_estado_auditoria}'.")
-        invalidate_facturas_cache()
-        cancelar_edicion_action()
-    else: st.error("No se pudo actualizar el estado de auditoria de la factura.")
-def eliminar_factura_action(factura_id):
-    if st.session_state.user_role != 'auditor':
-        st.error("Permiso Denegado. Solo los auditores pueden eliminar facturas.")
-        return False
-    success = db_ops.eliminar_factura(factura_id)
-    return success
-def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_reemplazo_factura_str, facturador, eps, area_servicio):
-    if not new_numero_factura:
-        st.error("El campo 'Nuevo Numero de Factura' es obligatorio.")
-        return
-    if not new_numero_factura.isdigit():
-        st.error("El 'Nuevo Numero de Factura' debe contener solo numeros.")
-        return
-    fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha Reemplazo Factura")
-    if fecha_reemplazo_factura_obj is None:
-        return
-    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha Reemplazo Factura"):
-        return
-    fecha_reemplazo_db = fecha_reemplazo_factura_obj.strftime('%Y-%m-%d')
-    factura_original_data = db_ops.obtener_factura_por_id(old_factura_id)
-    if not factura_original_data:
-        st.error("No se pudo obtener la informacion de la factura original para el reemplazo.")
-        return
-    new_fecha_generacion_automatica = datetime.now().strftime('%Y-%m-%d')
-    success = db_ops.guardar_factura_reemplazo(
-        old_factura_id, new_numero_factura, new_fecha_generacion_automatica,
-        factura_original_data[2], factura_original_data[3], factura_original_data[5],
-        fecha_reemplazo_db
-    )
-    if success:
-        st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
-        invalidate_facturas_cache()
-        cancelar_edicion_action()
-    else: st.error(f"No se pudo guardar la factura de reemplazo. El numero '{new_numero_factura}' ya podria existir.")
-def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actual):
-    if st.session_state.user_role != 'legalizador':
-        st.error("Permiso Denegado. Solo los legalizadores pueden marcar facturas como corregidas.")
-        return
-    success = db_ops.actualizar_estado_auditoria_factura(factura_id, "Corregida por Legalizador", observacion_actual, tipo_error_actual)
-    if success:
-        st.success(f"Factura ID: {factura_id} marcada como 'Corregida por Legalizador'.")
-        invalidate_facturas_cache()
-        cancelar_edicion_action()
-    else: st.error("No se pudo marcar la factura como corregida.")
-def actualizar_fecha_entrega_radicador_action(factura_id, set_date):
-    fecha_entrega = datetime.now().strftime('%Y-%m-%d %H:%M:%S') if set_date else None
-    success = db_ops.actualizar_fecha_entrega_radicador(factura_id, fecha_entrega)
-    if success:
-        st.success("Fecha de entrega al radicador actualizada correctamente.")
-        invalidate_facturas_cache()
-        cancelar_edicion_action()
-    else: st.error("No se pudo actualizar la fecha de entrega al radicador.")
 def cancelar_edicion_action():
     st.session_state.editing_factura_id = None
     st.session_state.edit_mode = False
