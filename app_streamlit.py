@@ -5,7 +5,7 @@ import pandas as pd
 import os
 from utils.io_utils import export_df_to_csv
 from dateutil.rrule import rrule, DAILY
-from utils.date_utils import sumar_dias_habiles, calcular_dias_habiles_entre_fechas
+from utils.date_utils import sumar_dias_habiles, calcular_dias_habiles_entre_fechas, parse_date, validate_future_date 
 from config.constants import (
     FACTURADORES, EPS_OPCIONES, AREA_SERVICIO_OPCIONES,
     ESTADO_AUDITORIA_OPCIONES, TIPO_ERROR_OPCIONES
@@ -140,18 +140,18 @@ def display_bulk_load_section():
             for index, row in df.iterrows():
                 total_rows += 1
                 numero_factura_csv = str(row['Numero de Factura']).strip()
-                fecha_str_csv = str(row['Fecha de Generacion']).strip()
+                fecha_str_csv = str(row['Fecha de Generacion']).strip()                
                 if not numero_factura_csv.isdigit():
-                    st.warning(f"Error en fila {index+2}: Numero de factura '{numero_factura_csv}' no es numerico. Saltando.")
+                    st.warning(f"Fila {index+2}: Numero de factura '{numero_factura_csv}' no es numerico. Saltando.")
                     skipped_count += 1
                     continue
-                try: fecha_generacion_csv_obj = datetime.strptime(fecha_str_csv, '%Y-%m-%d').date()
-                except ValueError:
-                    try: fecha_generacion_csv_obj = datetime.strptime(fecha_str_csv, '%d/%m/%Y').date()
-                    except ValueError:
-                        st.warning(f"Error en fila {index+2}: Formato de fecha '{fecha_str_csv}' invalido. Debe ser 'YYYY-MM-DD' o 'DD/MM/YYYY'. Saltando.")
-                        skipped_count += 1
-                        continue
+                fecha_generacion_csv_obj = parse_date(fecha_str_csv, f"Fecha de Generacion (Fila {index+2})")
+                if fecha_generacion_csv_obj is None:
+                    skipped_count += 1
+                    continue
+                if not validate_future_date(fecha_generacion_csv_obj, f"Fecha de Generacion (Fila {index+2})"):
+                    skipped_count += 1
+                    continue
                 current_time = datetime.now().time()
                 fecha_hora_entrega_obj = datetime.combine(fecha_generacion_csv_obj, current_time)
                 fecha_hora_entrega_db = fecha_hora_entrega_obj.strftime('%Y-%m-%d %H:%M:%S')
@@ -160,10 +160,9 @@ def display_bulk_load_section():
                 if factura_id:
                     if area_servicio_bulk == "SOAT": db_ops.insertar_detalles_soat_bulk(factura_id, fecha_generacion_db)
                     inserted_count += 1
-                    st.success(f"Factura '{numero_factura_csv}' (Fila {index+2}) insertada correctamente.")
                 else:
                     skipped_count += 1
-                    st.info(f"Advertencia: Factura '{numero_factura_csv}' (Fila {index+2}) ya existe o hubo un error al insertar. Saltando.")
+                    st.info(f"Fila {index+2}: Factura '{numero_factura_csv}' ya existe o hubo un error al insertar. Saltando.")
             st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
             invalidate_facturas_cache()
             st.rerun()
@@ -349,19 +348,14 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     if not numero_factura.isdigit():
         st.error("El campo 'Numero de Factura' debe contener solo numeros.")
         return
-    try: fecha_generacion_obj = datetime.strptime(fecha_generacion_str, '%Y-%m-%d').date()
-    except ValueError:
-        try: fecha_generacion_obj = datetime.strptime(fecha_generacion_str, '%d/%m/%Y').date()
-        except ValueError:
-            st.error("El campo Fecha de Generacion debe tener el formato 'YYYY-MM-DD' o 'DD/MM/YYYY'.")
-            return
-    hoy_obj = datetime.now().date()
-    if fecha_generacion_obj > hoy_obj:
-        st.error("La Fecha de Generacion no puede ser una fecha futura.")
+    fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generacion")
+    if fecha_generacion_obj is None:
+        return
+    if not validate_future_date(fecha_generacion_obj, "Fecha de Generacion"):
         return
     fecha_generacion_db = fecha_generacion_obj.strftime('%Y-%m-%d')
     fecha_hora_entrega = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, fecha_generacion_db, area_servicio, fecha_hora_entrega)
+    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, area_servicio, facturador, fecha_generacion_db, eps, fecha_hora_entrega) # Modificación: orden de argumentos para guardar_factura
     if factura_id:
         if area_servicio == "SOAT": db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
@@ -375,15 +369,10 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
     if not numero_factura.isdigit():
         st.error("El campo 'Numero de Factura' debe contener solo numeros.")
         return
-    try: fecha_generacion_obj = datetime.strptime(fecha_generacion_str, '%Y-%m-%d').date()
-    except ValueError:
-        try: fecha_generacion_obj = datetime.strptime(fecha_generacion_str, '%d/%m/%Y').date()
-        except ValueError:
-            st.error("El campo Fecha de Generacion debe tener el formato 'YYYY-MM-DD' o 'DD/MM/YYYY'.")
-            return
-    hoy_obj = datetime.now().date()
-    if fecha_generacion_obj > hoy_obj:
-        st.error("La Fecha de Generacion no puede ser una fecha futura.")
+    fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generacion")
+    if fecha_generacion_obj is None:
+        return
+    if not validate_future_date(fecha_generacion_obj, "Fecha de Generacion"):
         return
     fecha_generacion_db = fecha_generacion_obj.strftime('%Y-%m-%d')
     original_data = db_ops.obtener_factura_por_id(factura_id)
@@ -393,7 +382,13 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
     estado_auditoria_to_save = original_data[14]
     observacion_auditor_to_save = original_data[15]
     tipo_error_to_save = original_data[16]
-    success = db_ops.actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fecha_generacion_db, eps, original_data[6], original_data[7], original_data[8], original_data[9], original_data[10], original_data[11], original_data[12], original_data[13], estado_auditoria_to_save, observacion_auditor_to_save, tipo_error_to_save, original_data[17])
+    success = db_ops.actualizar_factura(
+        factura_id, numero_factura, area_servicio, facturador, fecha_generacion_db,
+        eps, original_data[6], original_data[7], original_data[8], original_data[9],
+        original_data[10], original_data[11], original_data[12], original_data[13],
+        estado_auditoria_to_save, observacion_auditor_to_save, tipo_error_to_save,
+        original_data[17]
+    )
     if success:
         st.success("Factura actualizada correctamente.")
         invalidate_facturas_cache()
@@ -447,18 +442,10 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if not new_numero_factura.isdigit():
         st.error("El 'Nuevo Numero de Factura' debe contener solo numeros.")
         return
-    if not fecha_reemplazo_factura_str:
-        st.error("El campo 'Fecha Reemplazo Factura' es obligatorio para el reemplazo.")
+    fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha Reemplazo Factura")
+    if fecha_reemplazo_factura_obj is None:
         return
-    try: fecha_reemplazo_factura_obj = datetime.strptime(fecha_reemplazo_factura_str, '%Y-%m-%d').date()
-    except ValueError:
-        try: fecha_reemplazo_factura_obj = datetime.strptime(fecha_reemplazo_factura_str, '%d/%m/%Y').date()
-        except ValueError:
-            st.error("El campo 'Fecha Reemplazo Factura' debe tener el formato 'YYYY-MM-DD' o 'DD/MM/YYYY'.")
-            return
-    hoy_obj = datetime.now().date()
-    if fecha_reemplazo_factura_obj > hoy_obj:
-        st.error("La 'Fecha Reemplazo Factura' no puede ser una fecha futura.")
+    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha Reemplazo Factura"):
         return
     fecha_reemplazo_db = fecha_reemplazo_factura_obj.strftime('%Y-%m-%d')
     factura_original_data = db_ops.obtener_factura_por_id(old_factura_id)
@@ -466,7 +453,11 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
         st.error("No se pudo obtener la informacion de la factura original para el reemplazo.")
         return
     new_fecha_generacion_automatica = datetime.now().strftime('%Y-%m-%d')
-    success = db_ops.guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion_automatica, factura_original_data[2], factura_original_data[3], factura_original_data[5], fecha_reemplazo_db)
+    success = db_ops.guardar_factura_reemplazo(
+        old_factura_id, new_numero_factura, new_fecha_generacion_automatica,
+        factura_original_data[2], factura_original_data[3], factura_original_data[5],
+        fecha_reemplazo_db
+    )
     if success:
         st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
         invalidate_facturas_cache()
