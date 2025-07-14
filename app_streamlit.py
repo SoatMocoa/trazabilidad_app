@@ -355,7 +355,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         return
     fecha_generacion_db = fecha_generacion_obj.strftime('%Y-%m-%d')
     fecha_hora_entrega = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, area_servicio, facturador, fecha_generacion_db, eps, fecha_hora_entrega) # Modificación: orden de argumentos para guardar_factura
+    factura_id = db_ops.guardar_factura(facturador, eps, numero_factura, fecha_generacion_db, area_servicio, fecha_hora_entrega)
     if factura_id:
         if area_servicio == "SOAT": db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
