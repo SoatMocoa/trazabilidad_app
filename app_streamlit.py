@@ -361,28 +361,30 @@ def display_invoice_table(user_role):
     }.get(current_search_criterion)
 
     facturas_raw = get_cached_facturas(search_term=current_search_term, search_column=db_column_name)
+    st.write(f"DEBUG: Facturas cargadas desde DB: {len(facturas_raw)}") # DEBUG PRINT
 
     processed_facturas = []
     hoy_obj = date.today() # Usar date.today() para comparar solo fechas
 
     for factura in facturas_raw:
+        st.write(f"DEBUG: Procesando factura ID: {factura.get('id', 'N/A')} - Número: {factura.get('numero_factura', 'N/A')}") # DEBUG PRINT
         # Acceder a los datos por nombre de columna (diccionario)
-        factura_id = factura['id']
-        numero_factura_base = factura['numero_factura']
-        area_servicio = factura['area_servicio']
-        facturador_nombre = factura['facturador']
-        fecha_generacion_base_obj = factura['fecha_generacion'] # Ya es un objeto date
-        eps_nombre = factura['eps']
-        fecha_hora_entrega = factura['fecha_hora_entrega'] # Ya es un objeto datetime
-        estado_factura = factura['estado']
-        reemplazada_por_numero = factura['reemplazada_por_numero_factura'] if factura['reemplazada_por_numero_factura'] else ""
-        estado_auditoria_db = factura['estado_auditoria'] if factura['estado_auditoria'] else "Pendiente"
-        observacion_auditor_db = factura['observacion_auditor'] if factura['observacion_auditor'] else ""
-        tipo_error_db = factura['tipo_error'] if factura['tipo_error'] else ""
-        fecha_reemplazo_db_val = factura['fecha_reemplazo'] # Ya es un objeto date
-        num_fact_original_linked = factura['num_fact_original_linked'] if factura['num_fact_original_linked'] else ""
-        fecha_gen_original_linked_obj = factura['fecha_gen_original_linked'] # Ya es un objeto date
-        fecha_entrega_radicador_db = factura['fecha_entrega_radicador'] # Ya es un objeto datetime
+        factura_id = factura.get('id')
+        numero_factura_base = factura.get('numero_factura', '')
+        area_servicio = factura.get('area_servicio', '')
+        facturador_nombre = factura.get('facturador', '')
+        fecha_generacion_base_obj = factura.get('fecha_generacion') 
+        eps_nombre = factura.get('eps', '')
+        fecha_hora_entrega = factura.get('fecha_hora_entrega') 
+        estado_factura = factura.get('estado', '')
+        reemplazada_por_numero = factura.get('reemplazada_por_numero_factura', '')
+        estado_auditoria_db = factura.get('estado_auditoria', 'Pendiente')
+        observacion_auditor_db = factura.get('observacion_auditor', '')
+        tipo_error_db = factura.get('tipo_error', '')
+        fecha_reemplazo_db_val = factura.get('fecha_reemplazo') 
+        num_fact_original_linked = factura.get('num_fact_original_linked', '')
+        fecha_gen_original_linked_obj = factura.get('fecha_gen_original_linked') 
+        fecha_entrega_radicador_db = factura.get('fecha_entrega_radicador') 
 
         # ** FIX: Ensure fecha_generacion_base_obj is a date object before using it in calculations **
         if isinstance(fecha_generacion_base_obj, str):
@@ -449,7 +451,7 @@ def display_invoice_table(user_role):
         display_fecha_generacion_actual_col = ""
         display_fecha_reemplazo_display = ""
 
-        if factura['factura_original_id'] is not None: # Es una factura de reemplazo
+        if factura.get('factura_original_id') is not None: # Es una factura de reemplazo
             display_numero_factura_col = num_fact_original_linked
             display_numero_reemplazo_col = numero_factura_base
             display_fecha_generacion_actual_col = fecha_gen_original_linked_obj.strftime('%Y-%m-%d') if fecha_gen_original_linked_obj else ""
@@ -492,10 +494,11 @@ def display_invoice_table(user_role):
             "Observación Auditor": observacion_auditor_db,
             "Fecha Entrega Radicador": fecha_entrega_radicador_db.strftime('%Y-%m-%d %H:%M:%S') if fecha_entrega_radicador_db else ""
         })
-
+    st.write(f"DEBUG: Facturas procesadas para display: {len(processed_facturas)}") # DEBUG PRINT
     df_facturas = pd.DataFrame(processed_facturas)
 
     if not df_facturas.empty:
+        st.write("DEBUG: DataFrame no está vacío, intentando mostrar.") # DEBUG PRINT
         def get_sort_key(row):
             if row["Estado Auditoria"] == 'Devuelta por Auditor': return 1
             elif row["Estado Auditoria"] == 'Corregida por Legalizador': return 2
@@ -509,6 +512,7 @@ def display_invoice_table(user_role):
         st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
+        st.write("DEBUG: DataFrame está vacío.") # DEBUG PRINT
 
     # Sección de acciones para factura seleccionada
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
