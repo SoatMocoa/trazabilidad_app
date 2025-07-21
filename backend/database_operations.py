@@ -220,6 +220,7 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
     if conn:
         try:
             with conn.cursor() as cursor:
+                # Verificar si el número de factura ya existe para otra factura (excluyendo la actual)
                 cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
                 if cursor.fetchone():
                     logging.warning(f"Intento de actualizar factura con número duplicado: {numero_factura}")
