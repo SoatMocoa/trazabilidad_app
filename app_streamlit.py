@@ -108,6 +108,19 @@ def main_app_page():
     st.header("Facturas Registradas")
     display_invoice_table(user_role)
 
+def get_selectbox_default_index(options_list, current_value):
+    """
+    Calcula el índice por defecto para un st.selectbox.
+    Retorna el índice del valor actual + 1 (por la opción vacía inicial),
+    o 0 si no se encuentra o no hay valor actual.
+    """
+    if current_value:
+        try:
+            return options_list.index(current_value) + 1
+        except ValueError:
+            pass # Valor no encontrado, se usará el índice 0 (opción vacía)
+    return 0
+
 def display_invoice_entry_form(user_role):
     """
     Muestra el formulario para ingresar o editar una factura individual.
@@ -120,32 +133,20 @@ def display_invoice_entry_form(user_role):
 
     with st.form(key=f"invoice_entry_form_{st.session_state.form_key}", clear_on_submit=False):
         # Campos del formulario
-        facturador_default_index = 0
-        if current_data and not st.session_state.refacturar_mode:
-            try:
-                facturador_default_index = FACTURADORES.index(current_data['facturador']) + 1
-            except ValueError:
-                facturador_default_index = 0
-        facturador = st.selectbox("Legalizador:", options=[""] + FACTURADORES, index=facturador_default_index, disabled=st.session_state.refacturar_mode)
+        facturador = st.selectbox("Legalizador:", options=[""] + FACTURADORES, 
+                                  index=get_selectbox_default_index(FACTURADORES, current_data.get('facturador')) if current_data and not st.session_state.refacturar_mode else 0, 
+                                  disabled=st.session_state.refacturar_mode)
 
-        eps_default_index = 0
-        if current_data and not st.session_state.refacturar_mode:
-            try:
-                eps_default_index = EPS_OPCIONES.index(current_data['eps']) + 1
-            except ValueError:
-                eps_default_index = 0
-        eps = st.selectbox("EPS:", options=[""] + EPS_OPCIONES, index=eps_default_index, disabled=st.session_state.refacturar_mode)
+        eps = st.selectbox("EPS:", options=[""] + EPS_OPCIONES, 
+                           index=get_selectbox_default_index(EPS_OPCIONES, current_data.get('eps')) if current_data and not st.session_state.refacturar_mode else 0, 
+                           disabled=st.session_state.refacturar_mode)
 
         numero_factura = st.text_input("Número de Factura:", value=current_data['numero_factura'] if current_data and not st.session_state.refacturar_mode else "", disabled=st.session_state.refacturar_mode)
         fecha_generacion = st.text_input("Fecha de Generación (YYYY-MM-DD o DD/MM/YYYY):", value=fecha_generacion_val, disabled=st.session_state.refacturar_mode)
 
-        area_servicio_default_index = 0
-        if current_data and not st.session_state.refacturar_mode:
-            try:
-                area_servicio_default_index = AREA_SERVICIO_OPCIONES.index(current_data['area_servicio']) + 1
-            except ValueError:
-                area_servicio_default_index = 0
-        area_servicio = st.selectbox("Área de Servicio:", options=[""] + AREA_SERVICIO_OPCIONES, index=area_servicio_default_index, disabled=st.session_state.refacturar_mode)
+        area_servicio = st.selectbox("Área de Servicio:", options=[""] + AREA_SERVICIO_OPCIONES, 
+                                     index=get_selectbox_default_index(AREA_SERVICIO_OPCIONES, current_data.get('area_servicio')) if current_data and not st.session_state.refacturar_mode else 0, 
+                                     disabled=st.session_state.refacturar_mode)
 
         # Sección de refacturación
         if st.session_state.refacturar_mode:
@@ -270,7 +271,14 @@ def display_bulk_load_section():
                 fecha_hora_entrega_db = datetime.now()
 
                 # Usar la función guardar_factura con los valores globales seleccionados
-                factura_id = db_ops.guardar_factura(numero_factura_csv, area_servicio_bulk, facturador_bulk, fecha_generacion_db, eps_bulk, fecha_hora_entrega_db)
+                factura_id = db_ops.guardar_factura(
+                    numero_factura=numero_factura_csv, 
+                    area_servicio=area_servicio_bulk, 
+                    facturador=facturador_bulk, 
+                    fecha_generacion=fecha_generacion_db, 
+                    eps=eps_bulk, 
+                    fecha_hora_entrega=fecha_hora_entrega_db
+                )
 
                 if factura_id:
                     if area_servicio_bulk == "SOAT":
@@ -653,7 +661,14 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     # fecha_hora_entrega debe ser un objeto datetime
     fecha_hora_entrega = datetime.now()
 
-    factura_id = db_ops.guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion_db, eps, fecha_hora_entrega)
+    factura_id = db_ops.guardar_factura(
+        numero_factura=numero_factura, 
+        area_servicio=area_servicio, 
+        facturador=facturador, 
+        fecha_generacion=fecha_generacion_db, 
+        eps=eps, 
+        fecha_hora_entrega=fecha_hora_entrega
+    )
 
     if factura_id:
         if area_servicio == "SOAT":
@@ -662,7 +677,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         invalidate_facturas_cache()
         cancelar_edicion_action() # Resetear el formulario después de guardar
     else:
-        st.error(f"La factura con número '{numero_factura}' ya existe.")
+        st.error(f"La factura con número '{numero_factura}' ya existe con la misma combinación de Legalizador, EPS y Área de Servicio.")
 
 def actualizar_factura_action(factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps,
                                fecha_hora_entrega, tiene_correccion, descripcion_devolucion,

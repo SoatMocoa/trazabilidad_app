@@ -1,6 +1,7 @@
 import os
 import psycopg2
 from psycopg2 import Error
+from psycopg2 import errors # Importar errores específicos de psycopg2
 from datetime import datetime
 import logging
 
@@ -50,7 +51,7 @@ def crear_tablas():
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS facturas (
                         id SERIAL PRIMARY KEY,
-                        numero_factura TEXT NOT NULL UNIQUE,
+                        numero_factura TEXT NOT NULL, -- Eliminada la restricción UNIQUE aquí para permitir la compuesta
                         area_servicio TEXT,
                         facturador TEXT,
                         fecha_generacion DATE, -- Cambiado a DATE
@@ -68,7 +69,8 @@ def crear_tablas():
                         tipo_error TEXT,
                         fecha_reemplazo DATE, -- Cambiado a DATE
                         fecha_entrega_radicador TIMESTAMP, -- Cambiado a TIMESTAMP
-                        FOREIGN KEY (factura_original_id) REFERENCES facturas(id)
+                        FOREIGN KEY (factura_original_id) REFERENCES facturas(id),
+                        CONSTRAINT unique_factura_details UNIQUE (numero_factura, facturador, eps, area_servicio)
                     );
                 """)
                 cursor.execute("""
@@ -108,13 +110,7 @@ def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion,
     if conn:
         try:
             with conn.cursor() as cursor:
-                # Verificar si el número de factura ya existe
-                cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
-                if cursor.fetchone():
-                    # FIX: Cambiado el mensaje de log para imprimir el numero_factura real.
-                    logging.warning(f"Intento de guardar factura duplicada: Número de Factura '{numero_factura}'.")
-                    return None # Factura ya existe
-
+                # Se elimina la verificación SELECT explícita y se confía en la restricción UNIQUE de la DB.
                 cursor.execute("""
                     INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
                     VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
@@ -123,6 +119,11 @@ def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion,
                 conn.commit()
                 logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}")
                 return factura_id
+        except errors.UniqueViolation as e:
+            conn.rollback()
+            # Mensaje más específico para la violación de la restricción compuesta
+            logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
+            return None
         except Error as e:
             logging.error(f"Error al guardar factura '{numero_factura}': {e}")
             conn.rollback()
@@ -221,9 +222,17 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
         try:
             with conn.cursor() as cursor:
                 # Verificar si el número de factura ya existe para otra factura (excluyendo la actual)
-                cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s AND id != %s;", (numero_factura, factura_id))
+                # Ahora también se verifica la unicidad compuesta para actualizaciones
+                cursor.execute("""
+                    SELECT id FROM facturas 
+                    WHERE numero_factura = %s 
+                    AND facturador = %s 
+                    AND eps = %s 
+                    AND area_servicio = %s 
+                    AND id != %s;
+                """, (numero_factura, facturador, eps, area_servicio, factura_id))
                 if cursor.fetchone():
-                    logging.warning(f"Intento de actualizar factura con número duplicado: {numero_factura}")
+                    logging.warning(f"Intento de actualizar factura con combinación duplicada: (Número: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
                     return False
 
                 cursor.execute("""
@@ -313,10 +322,16 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
     if conn:
         try:
             with conn.cursor() as cursor:
-                # Verificar si el nuevo número de factura ya existe
-                cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (new_numero_factura,))
+                # Verificar si el nuevo número de factura ya existe con la misma combinación de campos
+                cursor.execute("""
+                    SELECT id FROM facturas 
+                    WHERE numero_factura = %s 
+                    AND facturador = %s 
+                    AND eps = %s 
+                    AND area_servicio = %s;
+                """, (new_numero_factura, facturador, eps, area_servicio))
                 if cursor.fetchone():
-                    logging.warning(f"Intento de guardar factura de reemplazo con número duplicado: {new_numero_factura}")
+                    logging.warning(f"Intento de guardar factura de reemplazo con combinación duplicada: (Número: '{new_numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
                     return False
 
                 # Insertar la nueva factura de reemplazo
