@@ -380,7 +380,7 @@ def display_invoice_table(user_role):
         fecha_reemplazo_db_val = factura['fecha_reemplazo'] if factura['fecha_reemplazo'] else "" # Ya es un objeto date
         num_fact_original_linked = factura['num_fact_original_linked'] if factura['num_fact_original_linked'] else ""
         fecha_gen_original_linked_obj = factura['fecha_gen_original_linked'] if factura['fecha_gen_original_linked'] else "" # Ya es un objeto date
-        fecha_entrega_radicador_db = factura['fecha_entrega_radicador'] if factura['fecha_entrega_radicador'] else "" # Ya es un objeto datetime
+        fecha_entrega_radicador_db = factura['fecha_entrega_radicador'] # Ya es un objeto datetime
 
         # ** FIX: Ensure fecha_generacion_base_obj is a date object before using it in calculations **
         if isinstance(fecha_generacion_base_obj, str):
@@ -393,6 +393,25 @@ def display_invoice_table(user_role):
                 fecha_generacion_base_obj = date.today()
         elif fecha_generacion_base_obj is None:
             fecha_generacion_base_obj = date.today() # Default if None
+
+        # ** FIX: Ensure fecha_hora_entrega is a datetime object or None **
+        if isinstance(fecha_hora_entrega, str) and fecha_hora_entrega:
+            try:
+                fecha_hora_entrega = datetime.strptime(fecha_hora_entrega, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                fecha_hora_entrega = None # Fallback if parsing fails
+        elif not isinstance(fecha_hora_entrega, datetime):
+            fecha_hora_entrega = None # Ensure it's None if not a datetime or parsable string
+
+        # ** FIX: Ensure fecha_entrega_radicador_db is a datetime object or None **
+        if isinstance(fecha_entrega_radicador_db, str) and fecha_entrega_radicador_db:
+            try:
+                fecha_entrega_radicador_db = datetime.strptime(fecha_entrega_radicador_db, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                fecha_entrega_radicador_db = None # Fallback if parsing fails
+        elif not isinstance(fecha_entrega_radicador_db, datetime):
+            fecha_entrega_radicador_db = None # Ensure it's None if not a datetime or parsable string
+
 
         # Cálculo de días restantes
         fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
