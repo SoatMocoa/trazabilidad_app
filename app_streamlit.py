@@ -211,34 +211,44 @@ def display_bulk_load_section():
     Muestra la sección para la carga masiva de facturas desde un archivo CSV.
     """
     with st.form("bulk_load_form"):
-        st.write("Por favor, selecciona el Legalizador, EPS y Área de Servicio para todas las facturas del CSV.")
-        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES)
-        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES)
-        area_servicio_bulk = st.selectbox("Área de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES)
-        uploaded_file = st.file_uploader("Cargar archivo CSV (columnas: Numero de Factura, Fecha de Generacion)", type=["csv"])
+        st.write("Cargar archivo CSV (columnas requeridas: Numero de Factura, Fecha de Generacion, Facturador, EPS, Area de Servicio)")
+        uploaded_file = st.file_uploader("Cargar archivo CSV", type=["csv"])
         bulk_submitted = st.form_submit_button("Cargar desde CSV")
 
         if bulk_submitted and uploaded_file is not None:
-            if not facturador_bulk or not eps_bulk or not area_servicio_bulk:
-                st.error("Por favor, selecciona Legalizador, EPS y Área de Servicio para la carga masiva.")
-                return
-
             inserted_count = 0
             skipped_count = 0
             total_rows = 0
             df = pd.read_csv(uploaded_file)
 
-            if 'Numero de Factura' not in df.columns or 'Fecha de Generacion' not in df.columns:
-                st.error("El archivo CSV debe contener las columnas 'Numero de Factura' y 'Fecha de Generacion'.")
+            required_columns = ['Numero de Factura', 'Fecha de Generacion', 'Facturador', 'EPS', 'Area de Servicio']
+            if not all(col in df.columns for col in required_columns):
+                st.error(f"El archivo CSV debe contener las columnas: {', '.join(required_columns)}.")
                 return
 
             st.write(f"Iniciando carga masiva desde: {uploaded_file.name}")
-            st.write(f"Facturador: {facturador_bulk}, EPS: {eps_bulk}, Área de Servicio: {area_servicio_bulk}")
 
             for index, row in df.iterrows():
                 total_rows += 1
                 numero_factura_csv = str(row['Numero de Factura']).strip()
                 fecha_str_csv = str(row['Fecha de Generacion']).strip()
+                facturador_csv = str(row['Facturador']).strip()
+                eps_csv = str(row['EPS']).strip()
+                area_servicio_csv = str(row['Area de Servicio']).strip()
+
+                # Validate facturador, eps, area_servicio against constants
+                if facturador_csv not in FACTURADORES:
+                    st.warning(f"Fila {index+2}: Legalizador '{facturador_csv}' no es válido. Saltando.")
+                    skipped_count += 1
+                    continue
+                if eps_csv not in EPS_OPCIONES:
+                    st.warning(f"Fila {index+2}: EPS '{eps_csv}' no es válida. Saltando.")
+                    skipped_count += 1
+                    continue
+                if area_servicio_csv not in AREA_SERVICIO_OPCIONES:
+                    st.warning(f"Fila {index+2}: Área de Servicio '{area_servicio_csv}' no es válida. Saltando.")
+                    skipped_count += 1
+                    continue
 
                 if not numero_factura_csv.isdigit():
                     st.warning(f"Fila {index+2}: Número de factura '{numero_factura_csv}' no es numérico. Saltando.")
@@ -260,10 +270,10 @@ def display_bulk_load_section():
                 fecha_hora_entrega_db = datetime.now()
 
                 # Usar la función guardar_factura (ya no insertar_factura_bulk)
-                factura_id = db_ops.guardar_factura(numero_factura_csv, area_servicio_bulk, facturador_bulk, fecha_generacion_db, eps_bulk, fecha_hora_entrega_db)
+                factura_id = db_ops.guardar_factura(numero_factura_csv, area_servicio_csv, facturador_csv, fecha_generacion_db, eps_csv, fecha_hora_entrega_db)
 
                 if factura_id:
-                    if area_servicio_bulk == "SOAT":
+                    if area_servicio_csv == "SOAT":
                         # Usar la función guardar_detalles_soat (ya no insertar_detalles_soat_bulk)
                         db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
                     inserted_count += 1
@@ -361,13 +371,11 @@ def display_invoice_table(user_role):
     }.get(current_search_criterion)
 
     facturas_raw = get_cached_facturas(search_term=current_search_term, search_column=db_column_name)
-    st.write(f"DEBUG: Facturas cargadas desde DB: {len(facturas_raw)}") # DEBUG PRINT
 
     processed_facturas = []
     hoy_obj = date.today() # Usar date.today() para comparar solo fechas
 
     for factura in facturas_raw:
-        st.write(f"DEBUG: Procesando factura ID: {factura.get('id', 'N/A')} - Número: {factura.get('numero_factura', 'N/A')}") # DEBUG PRINT
         # Acceder a los datos por nombre de columna (diccionario)
         factura_id = factura.get('id')
         numero_factura_base = factura.get('numero_factura', '')
@@ -494,11 +502,9 @@ def display_invoice_table(user_role):
             "Observación Auditor": observacion_auditor_db,
             "Fecha Entrega Radicador": fecha_entrega_radicador_db.strftime('%Y-%m-%d %H:%M:%S') if fecha_entrega_radicador_db else ""
         })
-    st.write(f"DEBUG: Facturas procesadas para display: {len(processed_facturas)}") # DEBUG PRINT
     df_facturas = pd.DataFrame(processed_facturas)
 
     if not df_facturas.empty:
-        st.write("DEBUG: DataFrame no está vacío, intentando mostrar.") # DEBUG PRINT
         def get_sort_key(row):
             if row["Estado Auditoria"] == 'Devuelta por Auditor': return 1
             elif row["Estado Auditoria"] == 'Corregida por Legalizador': return 2
@@ -512,7 +518,6 @@ def display_invoice_table(user_role):
         st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
-        st.write("DEBUG: DataFrame está vacío.") # DEBUG PRINT
 
     # Sección de acciones para factura seleccionada
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
