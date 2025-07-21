@@ -211,44 +211,37 @@ def display_bulk_load_section():
     Muestra la sección para la carga masiva de facturas desde un archivo CSV.
     """
     with st.form("bulk_load_form"):
-        st.write("Cargar archivo CSV (columnas requeridas: Numero de Factura, Fecha de Generacion, Facturador, EPS, Area de Servicio)")
+        st.write("Por favor, selecciona el Legalizador, EPS y Área de Servicio para todas las facturas del CSV.")
+        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES)
+        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES)
+        area_servicio_bulk = st.selectbox("Área de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES)
+        
+        st.write("Cargar archivo CSV (columnas requeridas: Numero de Factura, Fecha de Generacion)")
         uploaded_file = st.file_uploader("Cargar archivo CSV", type=["csv"])
         bulk_submitted = st.form_submit_button("Cargar desde CSV")
 
         if bulk_submitted and uploaded_file is not None:
+            if not facturador_bulk or not eps_bulk or not area_servicio_bulk:
+                st.error("Por favor, selecciona Legalizador, EPS y Área de Servicio para la carga masiva.")
+                return
+
             inserted_count = 0
             skipped_count = 0
             total_rows = 0
             df = pd.read_csv(uploaded_file)
 
-            required_columns = ['Numero de Factura', 'Fecha de Generacion', 'Facturador', 'EPS', 'Area de Servicio']
-            if not all(col in df.columns for col in required_columns):
-                st.error(f"El archivo CSV debe contener las columnas: {', '.join(required_columns)}.")
+            required_columns_csv = ['Numero de Factura', 'Fecha de Generacion'] # Only these are required in CSV now
+            if not all(col in df.columns for col in required_columns_csv):
+                st.error(f"El archivo CSV debe contener las columnas: {', '.join(required_columns_csv)}.")
                 return
 
             st.write(f"Iniciando carga masiva desde: {uploaded_file.name}")
+            st.write(f"Facturador global: {facturador_bulk}, EPS global: {eps_bulk}, Área de Servicio global: {area_servicio_bulk}")
 
             for index, row in df.iterrows():
                 total_rows += 1
                 numero_factura_csv = str(row['Numero de Factura']).strip()
                 fecha_str_csv = str(row['Fecha de Generacion']).strip()
-                facturador_csv = str(row['Facturador']).strip()
-                eps_csv = str(row['EPS']).strip()
-                area_servicio_csv = str(row['Area de Servicio']).strip()
-
-                # Validate facturador, eps, area_servicio against constants
-                if facturador_csv not in FACTURADORES:
-                    st.warning(f"Fila {index+2}: Legalizador '{facturador_csv}' no es válido. Saltando.")
-                    skipped_count += 1
-                    continue
-                if eps_csv not in EPS_OPCIONES:
-                    st.warning(f"Fila {index+2}: EPS '{eps_csv}' no es válida. Saltando.")
-                    skipped_count += 1
-                    continue
-                if area_servicio_csv not in AREA_SERVICIO_OPCIONES:
-                    st.warning(f"Fila {index+2}: Área de Servicio '{area_servicio_csv}' no es válida. Saltando.")
-                    skipped_count += 1
-                    continue
 
                 if not numero_factura_csv.isdigit():
                     st.warning(f"Fila {index+2}: Número de factura '{numero_factura_csv}' no es numérico. Saltando.")
@@ -269,11 +262,11 @@ def display_bulk_load_section():
                 # fecha_hora_entrega debe ser un objeto datetime
                 fecha_hora_entrega_db = datetime.now()
 
-                # Usar la función guardar_factura (ya no insertar_factura_bulk)
-                factura_id = db_ops.guardar_factura(numero_factura_csv, area_servicio_csv, facturador_csv, fecha_generacion_db, eps_csv, fecha_hora_entrega_db)
+                # Usar la función guardar_factura con los valores globales seleccionados
+                factura_id = db_ops.guardar_factura(numero_factura_csv, area_servicio_bulk, facturador_bulk, fecha_generacion_db, eps_bulk, fecha_hora_entrega_db)
 
                 if factura_id:
-                    if area_servicio_csv == "SOAT":
+                    if area_servicio_bulk == "SOAT":
                         # Usar la función guardar_detalles_soat (ya no insertar_detalles_soat_bulk)
                         db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
                     inserted_count += 1
