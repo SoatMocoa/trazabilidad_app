@@ -314,12 +314,13 @@ def highlight_rows(row):
         styles = ['background-color: lightblue'] * len(row)
     elif row["Estado Auditoria"] == 'Corregida por Legalizador':
         styles = ['background-color: lightsalmon'] * len(row)
-    elif row["Dias Restantes"] == "Refacturar":
+    # FIX: Changed "Dias Restantes" to "Días Restantes" to match DataFrame column name
+    elif row["Días Restantes"] == "Refacturar":
         styles = ['background-color: salmon'] * len(row)
-    elif isinstance(row["Dias Restantes"], (int, float)):
-        if 1 <= row["Dias Restantes"] <= 3:
+    elif isinstance(row["Días Restantes"], (int, float)):
+        if 1 <= row["Días Restantes"] <= 3:
             styles = ['background-color: yellow'] * len(row)
-        elif row["Dias Restantes"] > 3:
+        elif row["Días Restantes"] > 3:
             styles = ['background-color: lightgreen'] * len(row)
     return styles
 
@@ -465,7 +466,7 @@ def display_invoice_table(user_role):
             "Fecha Generación": display_fecha_generacion_actual_col,
             "Fecha Reemplazo Factura": display_fecha_reemplazo_display,
             "Fecha de Entrega": fecha_hora_entrega.strftime('%Y-%m-%d %H:%M:%S') if fecha_hora_entrega else "",
-            "Días Restantes": display_dias_restantes,
+            "Días Restantes": display_dias_restantes, # Corrected column name
             "Estado": display_estado_for_tree,
             "Estado Auditoria": estado_auditoria_db,
             "Tipo de Error": tipo_error_db,
@@ -479,7 +480,7 @@ def display_invoice_table(user_role):
         def get_sort_key(row):
             if row["Estado Auditoria"] == 'Devuelta por Auditor': return 1
             elif row["Estado Auditoria"] == 'Corregida por Legalizador': return 2
-            elif row["Días Restantes"] == "Refacturar": return 3
+            elif row["Días Restantes"] == "Refacturar": return 3 # Corrected column name
             else: return 4
         
         df_facturas['sort_key'] = df_facturas.apply(get_sort_key, axis=1)
@@ -510,7 +511,7 @@ def display_invoice_table(user_role):
                 # Solo mostrar botón "Refacturar" si la factura está vencida
                 if not df_facturas.empty and selected_invoice_id in df_facturas['ID'].values:
                     # Obtener el estado de "Días Restantes" de la factura seleccionada
-                    dias_restantes_df = df_facturas[df_facturas['ID'] == selected_invoice_id]['Días Restantes'].iloc[0]
+                    dias_restantes_df = df_facturas[df_facturas['ID'] == selected_invoice_id]['Días Restantes'].iloc[0] # Corrected column name
                     if dias_restantes_df == "Refacturar":
                         if st.button("Refacturar", key="refacturar_button"):
                             cargar_factura_para_refacturar_action(selected_invoice_id)
