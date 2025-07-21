@@ -379,9 +379,9 @@ def display_invoice_table(user_role):
         estado_auditoria_db = factura['estado_auditoria'] if factura['estado_auditoria'] else "Pendiente"
         observacion_auditor_db = factura['observacion_auditor'] if factura['observacion_auditor'] else ""
         tipo_error_db = factura['tipo_error'] if factura['tipo_error'] else ""
-        fecha_reemplazo_db_val = factura['fecha_reemplazo'] if factura['fecha_reemplazo'] else "" # Ya es un objeto date
+        fecha_reemplazo_db_val = factura['fecha_reemplazo'] # Ya es un objeto date
         num_fact_original_linked = factura['num_fact_original_linked'] if factura['num_fact_original_linked'] else ""
-        fecha_gen_original_linked_obj = factura['fecha_gen_original_linked'] if factura['fecha_gen_original_linked'] else "" # Ya es un objeto date
+        fecha_gen_original_linked_obj = factura['fecha_gen_original_linked'] # Ya es un objeto date
         fecha_entrega_radicador_db = factura['fecha_entrega_radicador'] # Ya es un objeto datetime
 
         # ** FIX: Ensure fecha_generacion_base_obj is a date object before using it in calculations **
@@ -413,6 +413,24 @@ def display_invoice_table(user_role):
                 fecha_entrega_radicador_db = None # Fallback if parsing fails
         elif not isinstance(fecha_entrega_radicador_db, datetime):
             fecha_entrega_radicador_db = None # Ensure it's None if not a datetime or parsable string
+
+        # ** FIX: Ensure fecha_gen_original_linked_obj is a date object or None **
+        if isinstance(fecha_gen_original_linked_obj, str) and fecha_gen_original_linked_obj:
+            try:
+                fecha_gen_original_linked_obj = parse_date(fecha_gen_original_linked_obj, "Fecha Original Linked (DB)")
+            except ValueError:
+                fecha_gen_original_linked_obj = None
+        elif not isinstance(fecha_gen_original_linked_obj, date):
+            fecha_gen_original_linked_obj = None
+
+        # ** FIX: Ensure fecha_reemplazo_db_val is a date object or None **
+        if isinstance(fecha_reemplazo_db_val, str) and fecha_reemplazo_db_val:
+            try:
+                fecha_reemplazo_db_val = parse_date(fecha_reemplazo_db_val, "Fecha Reemplazo DB (DB)")
+            except ValueError:
+                fecha_reemplazo_db_val = None
+        elif not isinstance(fecha_reemplazo_db_val, date):
+            fecha_reemplazo_db_val = None
 
 
         # Cálculo de días restantes
