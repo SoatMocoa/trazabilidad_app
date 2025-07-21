@@ -109,7 +109,7 @@ def display_invoice_entry_form(user_role):
     
     # Asegurarse de que las fechas sean objetos date o cadenas vacías
     fecha_generacion_val = current_data['fecha_generacion'].strftime('%Y-%m-%d') if current_data and current_data['fecha_generacion'] else ""
-    fecha_reemplazo_factura_val = current_data['fecha_reemplazo'].strftime('%Y-%m-%d') if current_data and current_data['fecha_reemplazo'] else ""
+    # Se elimina fecha_reemplazo_factura_val ya que no se usa en los inputs de este formulario.
 
     with st.form(key=f"invoice_entry_form_{st.session_state.form_key}", clear_on_submit=False):
         # Campos del formulario
@@ -381,6 +381,18 @@ def display_invoice_table(user_role):
         num_fact_original_linked = factura['num_fact_original_linked'] if factura['num_fact_original_linked'] else ""
         fecha_gen_original_linked_obj = factura['fecha_gen_original_linked'] if factura['fecha_gen_original_linked'] else "" # Ya es un objeto date
         fecha_entrega_radicador_db = factura['fecha_entrega_radicador'] if factura['fecha_entrega_radicador'] else "" # Ya es un objeto datetime
+
+        # ** FIX: Ensure fecha_generacion_base_obj is a date object before using it in calculations **
+        if isinstance(fecha_generacion_base_obj, str):
+            # If it's a string, try to parse it. If parsing fails, default to today.
+            parsed_date = parse_date(fecha_generacion_base_obj, "Fecha Generación (DB)")
+            if parsed_date:
+                fecha_generacion_base_obj = parsed_date
+            else:
+                # Fallback if parsing fails (e.g., malformed string in DB)
+                fecha_generacion_base_obj = date.today()
+        elif fecha_generacion_base_obj is None:
+            fecha_generacion_base_obj = date.today() # Default if None
 
         # Cálculo de días restantes
         fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
