@@ -41,6 +41,15 @@ if 'form_key' not in st.session_state:
 if 'confirm_delete_id' not in st.session_state:
     st.session_state.confirm_delete_id = None
 
+# Nuevas claves de sesión para los selectores de carga masiva
+if 'bulk_facturador_key' not in st.session_state:
+    st.session_state.bulk_facturador_key = 0
+if 'bulk_eps_key' not in st.session_state:
+    st.session_state.bulk_eps_key = 0
+if 'bulk_area_servicio_key' not in st.session_state:
+    st.session_state.bulk_area_servicio_key = 0
+
+
 def login_page():
     """
     Muestra la página de inicio de sesión para la aplicación.
@@ -209,9 +218,10 @@ def display_bulk_load_section():
     """
     with st.form("bulk_load_form"):
         st.write("Por favor, selecciona el Legalizador, EPS y Área de Servicio para todas las facturas del CSV.")
-        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES)
-        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES)
-        area_servicio_bulk = st.selectbox("Área de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES)
+        # Se añaden claves a los selectbox para poder resetearlos
+        facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES, key=f"bulk_facturador_selector_{st.session_state.bulk_facturador_key}")
+        eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES, key=f"bulk_eps_selector_{st.session_state.bulk_eps_key}")
+        area_servicio_bulk = st.selectbox("Área de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES, key=f"bulk_area_servicio_selector_{st.session_state.bulk_area_servicio_key}")
         
         st.write("Cargar archivo CSV (columnas requeridas: Numero de Factura, Fecha de Generacion)")
         uploaded_file = st.file_uploader("Cargar archivo CSV", type=["csv"])
@@ -273,6 +283,10 @@ def display_bulk_load_section():
 
             st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
             invalidate_facturas_cache()
+            # Resetear claves de selectbox para limpiar sus valores
+            st.session_state.bulk_facturador_key += 1
+            st.session_state.bulk_eps_key += 1
+            st.session_state.bulk_area_servicio_key += 1
             st.rerun()
 
 def display_statistics():
