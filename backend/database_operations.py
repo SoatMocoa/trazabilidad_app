@@ -103,7 +103,7 @@ def obtener_credenciales_usuario(username):
             conn.close()
     return None
 
-def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_servicio, fecha_hora_entrega):
+def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega):
     conn = get_db_connection()
     if conn:
         try:
@@ -111,7 +111,8 @@ def guardar_factura(facturador, eps, numero_factura, fecha_generacion, area_serv
                 # Verificar si el número de factura ya existe
                 cursor.execute("SELECT id FROM facturas WHERE numero_factura = %s;", (numero_factura,))
                 if cursor.fetchone():
-                    logging.warning(f"Intento de guardar factura duplicada: {numero_factura}")
+                    # FIX: Cambiado el mensaje de log para imprimir el numero_factura real.
+                    logging.warning(f"Intento de guardar factura duplicada: Número de Factura '{numero_factura}'.")
                     return None # Factura ya existe
 
                 cursor.execute("""
@@ -306,7 +307,7 @@ def eliminar_factura(factura_id):
     return False
 
 def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
-                             area_servicio, facturador, eps, fecha_reemplazo):
+                              area_servicio, facturador, eps, fecha_reemplazo):
     conn = get_db_connection()
     if conn:
         try:
