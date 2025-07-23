@@ -163,6 +163,94 @@ def _ensure_datetime_objects(factura_data):
 
     return factura_data
 
+def _process_factura_for_display(factura):
+    """
+    Procesa una factura cruda obtenida de la base de datos para su visualización en la tabla.
+    Asegura tipos de datos correctos y calcula campos derivados como 'Días Restantes'.
+    """
+    # Asegurar que los objetos de fecha/hora sean del tipo correcto
+    factura = _ensure_datetime_objects(factura)
+
+    # Acceder a los datos por nombre de columna (diccionario)
+    factura_id = factura.get('id')
+    numero_factura_base = factura.get('numero_factura', '')
+    area_servicio = factura.get('area_servicio', '')
+    facturador_nombre = factura.get('facturador', '')
+    fecha_generacion_base_obj = factura.get('fecha_generacion') 
+    eps_nombre = factura.get('eps', '')
+    fecha_hora_entrega = factura.get('fecha_hora_entrega') 
+    estado_factura = factura.get('estado', '')
+    reemplazada_por_numero = factura.get('reemplazada_por_numero_factura', '')
+    estado_auditoria_db = factura.get('estado_auditoria', 'Pendiente')
+    observacion_auditor_db = factura.get('observacion_auditor', '')
+    tipo_error_db = factura.get('tipo_error', '')
+    fecha_reemplazo_db_val = factura.get('fecha_reemplazo') 
+    num_fact_original_linked = factura.get('num_fact_original_linked', '')
+    fecha_gen_original_linked_obj = factura.get('fecha_gen_original_linked') 
+    fecha_entrega_radicador_db = factura.get('fecha_entrega_radicador') 
+
+    hoy_obj = date.today() # Usar date.today() para comparar solo fechas
+
+    # Cálculo de días restantes
+    fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
+    dias_restantes_liquidacion = 0
+    if hoy_obj <= fecha_limite_liquidacion_obj:
+        dias_restantes_liquidacion = calcular_dias_habiles_entre_fechas(hoy_obj, fecha_limite_liquidacion_obj)
+    else:
+        dias_pasados_del_limite = calcular_dias_habiles_entre_fechas(fecha_limite_liquidacion_obj, hoy_obj)
+        dias_restantes_liquidacion = -dias_pasados_del_limite
+
+    # Lógica para mostrar números y fechas de factura original/reemplazo
+    display_numero_factura_col = ""
+    display_numero_reemplazo_col = ""
+    display_fecha_generacion_actual_col = ""
+    display_fecha_reemplazo_display = ""
+
+    if factura.get('factura_original_id') is not None: # Es una factura de reemplazo
+        display_numero_factura_col = num_fact_original_linked
+        display_numero_reemplazo_col = numero_factura_base
+        display_fecha_generacion_actual_col = fecha_gen_original_linked_obj.strftime('%Y-%m-%d') if fecha_gen_original_linked_obj else ""
+        display_fecha_reemplazo_display = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else "" # Fecha de la nueva factura
+    elif estado_factura == 'Reemplazada': # Es la factura original que fue reemplazada
+        display_numero_factura_col = numero_factura_base
+        display_numero_reemplazo_col = reemplazada_por_numero
+        display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
+        display_fecha_reemplazo_display = fecha_reemplazo_db_val.strftime('%Y-%m-%d') if fecha_reemplazo_db_val else ""
+    else: # Factura normal, no de reemplazo ni reemplazada
+        display_numero_factura_col = numero_factura_base
+        display_numero_reemplazo_col = ""
+        display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
+        display_fecha_reemplazo_display = ""
+
+    display_dias_restantes = dias_restantes_liquidacion
+    display_estado_for_tree = estado_factura
+
+    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
+        display_dias_restantes = "Refacturar"
+        display_estado_for_tree = "Vencidas"
+    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
+        display_dias_restantes = "Hoy Vence"
+        display_estado_for_tree = "Vencidas" # O un estado específico para hoy vence
+
+    return {
+        "ID": factura_id,
+        "Área de Servicio": area_servicio,
+        "Facturador": facturador_nombre,
+        "EPS": eps_nombre,
+        "Número de Factura": display_numero_factura_col,
+        "Número Reemplazo Factura": display_numero_reemplazo_col,
+        "Fecha Generación": display_fecha_generacion_actual_col,
+        "Fecha Reemplazo Factura": display_fecha_reemplazo_display,
+        "Fecha de Entrega": fecha_hora_entrega.strftime('%Y-%m-%d %H:%M:%S') if fecha_hora_entrega else "",
+        "Días Restantes": display_dias_restantes,
+        "Estado": display_estado_for_tree,
+        "Estado Auditoria": estado_auditoria_db,
+        "Tipo de Error": tipo_error_db,
+        "Observación Auditor": observacion_auditor_db,
+        "Fecha Entrega Radicador": fecha_entrega_radicador_db.strftime('%Y-%m-%d %H:%M:%S') if fecha_entrega_radicador_db else ""
+    }
+
+
 def display_invoice_entry_form(user_role):
     """
     Muestra el formulario para ingresar o editar una factura individual.
@@ -343,7 +431,7 @@ def display_bulk_load_section():
 
 def display_statistics():
     """
-    Muestra las estadísticas generales y por legalizador/EPS.
+    Muestra las estadísticas generales y por legalizador y EPS.
     """
     st.subheader("Estadísticas Generales de Facturas")
     col_radicadas, col_errores, col_pendientes, col_total = st.columns(4)
@@ -428,88 +516,9 @@ def display_invoice_table(user_role):
     facturas_raw = get_cached_facturas(search_term=current_search_term, search_column=db_column_name)
 
     processed_facturas = []
-    hoy_obj = date.today() # Usar date.today() para comparar solo fechas
-
     for factura in facturas_raw:
-        # Asegurar que los objetos de fecha/hora sean del tipo correcto
-        factura = _ensure_datetime_objects(factura)
-
-        # Acceder a los datos por nombre de columna (diccionario)
-        factura_id = factura.get('id')
-        numero_factura_base = factura.get('numero_factura', '')
-        area_servicio = factura.get('area_servicio', '')
-        facturador_nombre = factura.get('facturador', '')
-        fecha_generacion_base_obj = factura.get('fecha_generacion') 
-        eps_nombre = factura.get('eps', '')
-        fecha_hora_entrega = factura.get('fecha_hora_entrega') 
-        estado_factura = factura.get('estado', '')
-        reemplazada_por_numero = factura.get('reemplazada_por_numero_factura', '')
-        estado_auditoria_db = factura.get('estado_auditoria', 'Pendiente')
-        observacion_auditor_db = factura.get('observacion_auditor', '')
-        tipo_error_db = factura.get('tipo_error', '')
-        fecha_reemplazo_db_val = factura.get('fecha_reemplazo') 
-        num_fact_original_linked = factura.get('num_fact_original_linked', '')
-        fecha_gen_original_linked_obj = factura.get('fecha_gen_original_linked') 
-        fecha_entrega_radicador_db = factura.get('fecha_entrega_radicador') 
-
-        # Cálculo de días restantes
-        fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
-        dias_restantes_liquidacion = 0
-        if hoy_obj <= fecha_limite_liquidacion_obj:
-            dias_restantes_liquidacion = calcular_dias_habiles_entre_fechas(hoy_obj, fecha_limite_liquidacion_obj)
-        else:
-            dias_pasados_del_limite = calcular_dias_habiles_entre_fechas(fecha_limite_liquidacion_obj, hoy_obj)
-            dias_restantes_liquidacion = -dias_pasados_del_limite
-
-        # Lógica para mostrar números y fechas de factura original/reemplazo
-        display_numero_factura_col = ""
-        display_numero_reemplazo_col = ""
-        display_fecha_generacion_actual_col = ""
-        display_fecha_reemplazo_display = ""
-
-        if factura.get('factura_original_id') is not None: # Es una factura de reemplazo
-            display_numero_factura_col = num_fact_original_linked
-            display_numero_reemplazo_col = numero_factura_base
-            display_fecha_generacion_actual_col = fecha_gen_original_linked_obj.strftime('%Y-%m-%d') if fecha_gen_original_linked_obj else ""
-            display_fecha_reemplazo_display = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else "" # Fecha de la nueva factura
-        elif estado_factura == 'Reemplazada': # Es la factura original que fue reemplazada
-            display_numero_factura_col = numero_factura_base
-            display_numero_reemplazo_col = reemplazada_por_numero
-            display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
-            display_fecha_reemplazo_display = fecha_reemplazo_db_val.strftime('%Y-%m-%d') if fecha_reemplazo_db_val else ""
-        else: # Factura normal, no de reemplazo ni reemplazada
-            display_numero_factura_col = numero_factura_base
-            display_numero_reemplazo_col = ""
-            display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
-            display_fecha_reemplazo_display = ""
-
-        display_dias_restantes = dias_restantes_liquidacion
-        display_estado_for_tree = estado_factura
-
-        if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
-            display_dias_restantes = "Refacturar"
-            display_estado_for_tree = "Vencidas"
-        elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
-            display_dias_restantes = "Hoy Vence"
-            display_estado_for_tree = "Vencidas" # O un estado específico para hoy vence
-
-        processed_facturas.append({
-            "ID": factura_id,
-            "Área de Servicio": area_servicio,
-            "Facturador": facturador_nombre,
-            "EPS": eps_nombre,
-            "Número de Factura": display_numero_factura_col,
-            "Número Reemplazo Factura": display_numero_reemplazo_col,
-            "Fecha Generación": display_fecha_generacion_actual_col,
-            "Fecha Reemplazo Factura": display_fecha_reemplazo_display,
-            "Fecha de Entrega": fecha_hora_entrega.strftime('%Y-%m-%d %H:%M:%S') if fecha_hora_entrega else "",
-            "Días Restantes": display_dias_restantes,
-            "Estado": display_estado_for_tree,
-            "Estado Auditoria": estado_auditoria_db,
-            "Tipo de Error": tipo_error_db,
-            "Observación Auditor": observacion_auditor_db,
-            "Fecha Entrega Radicador": fecha_entrega_radicador_db.strftime('%Y-%m-%d %H:%M:%S') if fecha_entrega_radicador_db else ""
-        })
+        processed_facturas.append(_process_factura_for_display(factura))
+        
     df_facturas = pd.DataFrame(processed_facturas)
 
     if not df_facturas.empty:
