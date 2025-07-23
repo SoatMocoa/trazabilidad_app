@@ -225,10 +225,11 @@ def _process_factura_for_display(factura):
     display_dias_restantes = dias_restantes_liquidacion
     display_estado_for_tree = estado_factura
 
-    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
+    # La lógica de "Vencidas" para la tabla
+    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'Radicada y Aceptada']:
         display_dias_restantes = "Refacturar"
         display_estado_for_tree = "Vencidas"
-    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador']:
+    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'Radicada y Aceptada']:
         display_dias_restantes = "Hoy Vence"
         display_estado_for_tree = "Vencidas" # O un estado específico para hoy vence
 
@@ -431,24 +432,38 @@ def display_bulk_load_section():
 
 def display_statistics():
     """
-    Muestra las estadísticas generales y por legalizador y EPS.
+    Muestra las estadísticas generales de facturas con los nuevos estados.
     """
     st.subheader("Estadísticas Generales de Facturas")
-    col_radicadas, col_errores, col_pendientes, col_total = st.columns(4)
+    
+    # Obtener todas las facturas para calcular las vencidas localmente
+    all_facturas_raw = db_ops.cargar_facturas()
+    processed_facturas_for_stats = [_process_factura_for_display(f) for f in all_facturas_raw]
 
-    total_radicadas = db_ops.obtener_conteo_facturas_radicadas_ok()
-    total_errores = db_ops.obtener_conteo_facturas_con_errores()
+    # Contadores de los nuevos estados
     total_pendientes = db_ops.obtener_conteo_facturas_pendientes_global()
+    total_lista_para_radicar = db_ops.obtener_conteo_facturas_lista_para_radicar()
+    total_en_radicador = db_ops.obtener_conteo_facturas_en_radicador()
+    total_radicadas_y_aceptadas = db_ops.obtener_conteo_facturas_radicadas_y_aceptadas()
+    total_errores = db_ops.obtener_conteo_facturas_con_errores()
     total_general = db_ops.obtener_conteo_total_facturas()
 
-    with col_radicadas:
-        st.metric(label="Facturas Radicadas (OK)", value=total_radicadas)
-    with col_errores:
-        st.metric(label="Facturas con Errores", value=total_errores)
-    with col_pendientes:
+    # Calcular facturas vencidas (Refacturar) desde las procesadas
+    total_vencidas = sum(1 for f in processed_facturas_for_stats if f["Días Restantes"] == "Refacturar")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
         st.metric(label="Facturas Pendientes", value=total_pendientes)
-    with col_total:
-        st.metric(label="Total General de Facturas", value=total_general)
+        st.metric(label="Facturas En Radicador", value=total_en_radicador)
+    with col2:
+        st.metric(label="Facturas Lista para Radicar", value=total_lista_para_radicar)
+        st.metric(label="Facturas Radicadas y Aceptadas", value=total_radicadas_y_aceptadas)
+    with col3:
+        st.metric(label="Facturas con Errores", value=total_errores)
+        st.metric(label="Facturas Vencidas (Refacturar)", value=total_vencidas)
+
+    st.metric(label="Total General de Facturas", value=total_general)
+
 
     st.markdown("---")
     st.subheader("Conteo por Legalizador y EPS (Facturas Pendientes)")
@@ -595,16 +610,18 @@ def display_invoice_table(user_role):
                         st.rerun()
 
                 # Checkbox para fecha de entrega al radicador
-                fecha_entrega_radicador_val = st.session_state.current_invoice_data['fecha_entrega_radicador']
-                fecha_entrega_radicador_checked = st.checkbox(
-                    "Factura Entregada al Radicador",
-                    value=bool(fecha_entrega_radicador_val),
-                    key=f"radicador_checkbox_{selected_invoice_id}"
-                )
-                # Si el estado del checkbox cambia, actualizar la DB
-                if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
-                    actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
-                    st.rerun()
+                # Solo mostrar si el estado actual es 'Lista para Radicar' o 'En Radicador'
+                if factura_data_for_action['estado_auditoria'] in ['Lista para Radicar', 'En Radicador']:
+                    fecha_entrega_radicador_val = factura_data_for_action['fecha_entrega_radicador']
+                    fecha_entrega_radicador_checked = st.checkbox(
+                        "Factura Entregada al Radicador",
+                        value=bool(fecha_entrega_radicador_val),
+                        key=f"radicador_checkbox_{selected_invoice_id}"
+                    )
+                    # Si el estado del checkbox cambia, actualizar la DB
+                    if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
+                        actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
+                        st.rerun()
 
                 # Botón de eliminar factura
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):

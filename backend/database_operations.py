@@ -93,7 +93,7 @@ def crear_tablas():
                         factura_original_id INTEGER,
                         estado TEXT DEFAULT 'Activa',
                         reemplazada_por_numero_factura TEXT,
-                        estado_auditoria TEXT DEFAULT 'Pendiente',
+                        estado_auditoria TEXT DEFAULT 'Pendiente', -- Valor por defecto inicial
                         observacion_auditor TEXT,
                         tipo_error TEXT,
                         fecha_reemplazo DATE,
@@ -294,15 +294,31 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
 def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
     """
     Actualiza la fecha de entrega al radicador para una factura.
+    También actualiza el estado de auditoría a 'En Radicador' si se establece una fecha,
+    o a 'Lista para Radicar' si se elimina la fecha.
     """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
             with conn.cursor() as cursor:
+                # Obtener el estado actual de la factura
+                cursor.execute("SELECT estado_auditoria FROM facturas WHERE id = %s;", (factura_id,))
+                current_estado = cursor.fetchone()[0]
+
+                new_estado_auditoria = current_estado
+                if fecha_entrega is not None:
+                    # Si se está entregando al radicador, el estado pasa a 'En Radicador'
+                    if current_estado == 'Lista para Radicar':
+                        new_estado_auditoria = 'En Radicador'
+                else:
+                    # Si se está quitando la fecha de entrega, el estado vuelve a 'Lista para Radicar'
+                    if current_estado == 'En Radicador':
+                        new_estado_auditoria = 'Lista para Radicar'
+
                 cursor.execute("""
-                    UPDATE facturas SET fecha_entrega_radicador = %s WHERE id = %s;
-                """, (fecha_entrega, factura_id))
-                logging.info(f"Fecha de entrega al radicador para factura ID: {factura_id} actualizada.")
+                    UPDATE facturas SET fecha_entrega_radicador = %s, estado_auditoria = %s WHERE id = %s;
+                """, (fecha_entrega, new_estado_auditoria, factura_id))
+                logging.info(f"Fecha de entrega al radicador para factura ID: {factura_id} actualizada. Nuevo estado: {new_estado_auditoria}")
                 return True
     except Error as e:
         logging.error(f"Error al actualizar fecha de entrega al radicador para factura ID: {factura_id}: {e}")
@@ -416,20 +432,52 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
         logging.error(f"Error al obtener estadísticas de facturas pendientes: {e}")
         return []
 
-def obtener_conteo_facturas_radicadas_ok():
+def obtener_conteo_facturas_lista_para_radicar():
     """
-    Obtiene el conteo total de facturas con estado 'Radicada OK'.
+    Obtiene el conteo total de facturas con estado 'Lista para Radicar'.
     """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
             with conn.cursor() as cursor:
-                cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Radicada OK';")
+                cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Lista para Radicar';")
                 count = cursor.fetchone()[0]
-                logging.info(f"Conteo de facturas radicadas OK: {count}")
+                logging.info(f"Conteo de facturas Lista para Radicar: {count}")
                 return count
     except Error as e:
-        logging.error(f"Error al obtener conteo de facturas radicadas OK: {e}")
+        logging.error(f"Error al obtener conteo de facturas Lista para Radicar: {e}")
+        return 0
+
+def obtener_conteo_facturas_en_radicador():
+    """
+    Obtiene el conteo total de facturas con estado 'En Radicador'.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'En Radicador';")
+                count = cursor.fetchone()[0]
+                logging.info(f"Conteo de facturas En Radicador: {count}")
+                return count
+    except Error as e:
+        logging.error(f"Error al obtener conteo de facturas En Radicador: {e}")
+        return 0
+
+def obtener_conteo_facturas_radicadas_y_aceptadas():
+    """
+    Obtiene el conteo total de facturas con estado 'Radicada y Aceptada'.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Radicada y Aceptada';")
+                count = cursor.fetchone()[0]
+                logging.info(f"Conteo de facturas Radicadas y Aceptadas: {count}")
+                return count
+    except Error as e:
+        logging.error(f"Error al obtener conteo de facturas Radicadas y Aceptadas: {e}")
         return 0
 
 def obtener_conteo_facturas_con_errores():
@@ -465,6 +513,35 @@ def obtener_conteo_facturas_pendientes_global():
                 return count
     except Error as e:
         logging.error(f"Error al obtener conteo total de facturas pendientes: {e}")
+        return 0
+
+def obtener_conteo_facturas_vencidas():
+    """
+    Obtiene el conteo de facturas que están en estado 'Vencidas' o 'Refacturar'
+    (basado en la lógica de días restantes < 0).
+    Nota: Esto requiere que la lógica de "vencidas" se refleje en un estado
+    de auditoría o se calcule dinámicamente en la DB si es posible.
+    Por ahora, se asume que las 'Vencidas' son las marcadas como 'Refacturar'
+    en la lógica de la UI, o que se puede inferir.
+    Para una mayor precisión, se recomienda un estado explícito en DB si es posible.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
+            with conn.cursor() as cursor:
+                # Esta consulta asume que 'estado' se actualiza a 'Vencidas'
+                # o que hay una forma de identificar las vencidas directamente en la DB.
+                # Si 'Vencidas' es solo una etiqueta de la UI, esta consulta
+                # necesitará una lógica más compleja o un campo de estado en la DB.
+                cursor.execute("""
+                    SELECT COUNT(id) FROM facturas
+                    WHERE estado = 'Vencidas' AND estado_auditoria NOT IN ('Devuelta por Auditor', 'Corregida por Legalizador');
+                """)
+                count = cursor.fetchone()[0]
+                logging.info(f"Conteo de facturas vencidas: {count}")
+                return count
+    except Error as e:
+        logging.error(f"Error al obtener conteo de facturas vencidas: {e}")
         return 0
 
 def obtener_conteo_total_facturas():
