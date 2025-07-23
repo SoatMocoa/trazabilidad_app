@@ -121,6 +121,48 @@ def get_selectbox_default_index(options_list, current_value):
             pass # Valor no encontrado, se usará el índice 0 (opción vacía)
     return 0
 
+def _ensure_datetime_objects(factura_data):
+    """
+    Asegura que los campos de fecha/hora en los datos de la factura sean objetos datetime.date o datetime.datetime.
+    Esto es necesario porque los datos de la base de datos pueden venir como cadenas.
+    """
+    if factura_data:
+        # fecha_generacion (DATE)
+        if isinstance(factura_data.get('fecha_generacion'), str):
+            factura_data['fecha_generacion'] = parse_date(factura_data['fecha_generacion'])
+        elif factura_data.get('fecha_generacion') is None:
+            factura_data['fecha_generacion'] = date.today() # Valor por defecto si es None
+
+        # fecha_reemplazo (DATE)
+        if isinstance(factura_data.get('fecha_reemplazo'), str):
+            factura_data['fecha_reemplazo'] = parse_date(factura_data['fecha_reemplazo'])
+        
+        # fecha_hora_entrega (TIMESTAMP)
+        if isinstance(factura_data.get('fecha_hora_entrega'), str) and factura_data['fecha_hora_entrega']:
+            try:
+                factura_data['fecha_hora_entrega'] = datetime.strptime(factura_data['fecha_hora_entrega'], '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                factura_data['fecha_hora_entrega'] = None
+        elif not isinstance(factura_data.get('fecha_hora_entrega'), datetime):
+            factura_data['fecha_hora_entrega'] = None
+
+        # fecha_entrega_radicador (TIMESTAMP)
+        if isinstance(factura_data.get('fecha_entrega_radicador'), str) and factura_data['fecha_entrega_radicador']:
+            try:
+                factura_data['fecha_entrega_radicador'] = datetime.strptime(factura_data['fecha_entrega_radicador'], '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                factura_data['fecha_entrega_radicador'] = None
+        elif not isinstance(factura_data.get('fecha_entrega_radicador'), datetime):
+            factura_data['fecha_entrega_radicador'] = None
+
+        # fecha_gen_original_linked (DATE)
+        if isinstance(factura_data.get('fecha_gen_original_linked'), str) and factura_data['fecha_gen_original_linked']:
+            factura_data['fecha_gen_original_linked'] = parse_date(factura_data['fecha_gen_original_linked'])
+        elif not isinstance(factura_data.get('fecha_gen_original_linked'), date):
+            factura_data['fecha_gen_original_linked'] = None # O date.today() si prefieres un valor por defecto
+
+    return factura_data
+
 def display_invoice_entry_form(user_role):
     """
     Muestra el formulario para ingresar o editar una factura individual.
@@ -187,6 +229,8 @@ def display_invoice_entry_form(user_role):
                 # Obtener datos originales para campos no editables en este formulario
                 original_data = db_ops.obtener_factura_por_id(st.session_state.editing_factura_id)
                 if original_data:
+                    # Asegurarse de que los tipos de datos de fecha/hora sean correctos para la base de datos
+                    original_data = _ensure_datetime_objects(original_data)
                     actualizar_factura_action(
                         st.session_state.editing_factura_id,
                         numero_factura,
@@ -387,6 +431,9 @@ def display_invoice_table(user_role):
     hoy_obj = date.today() # Usar date.today() para comparar solo fechas
 
     for factura in facturas_raw:
+        # Asegurar que los objetos de fecha/hora sean del tipo correcto
+        factura = _ensure_datetime_objects(factura)
+
         # Acceder a los datos por nombre de columna (diccionario)
         factura_id = factura.get('id')
         numero_factura_base = factura.get('numero_factura', '')
@@ -404,46 +451,6 @@ def display_invoice_table(user_role):
         num_fact_original_linked = factura.get('num_fact_original_linked', '')
         fecha_gen_original_linked_obj = factura.get('fecha_gen_original_linked') 
         fecha_entrega_radicador_db = factura.get('fecha_entrega_radicador') 
-
-        # Asegurar que los objetos de fecha/hora sean del tipo correcto
-        if isinstance(fecha_generacion_base_obj, str):
-            parsed_date = parse_date(fecha_generacion_base_obj, "Fecha Generación (DB)")
-            fecha_generacion_base_obj = parsed_date if parsed_date else date.today()
-        elif fecha_generacion_base_obj is None:
-            fecha_generacion_base_obj = date.today()
-
-        if isinstance(fecha_hora_entrega, str) and fecha_hora_entrega:
-            try:
-                fecha_hora_entrega = datetime.strptime(fecha_hora_entrega, '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                fecha_hora_entrega = None
-        elif not isinstance(fecha_hora_entrega, datetime):
-            fecha_hora_entrega = None
-
-        if isinstance(fecha_entrega_radicador_db, str) and fecha_entrega_radicador_db:
-            try:
-                fecha_entrega_radicador_db = datetime.strptime(fecha_entrega_radicador_db, '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                fecha_entrega_radicador_db = None
-        elif not isinstance(fecha_entrega_radicador_db, datetime):
-            fecha_entrega_radicador_db = None
-
-        if isinstance(fecha_gen_original_linked_obj, str) and fecha_gen_original_linked_obj:
-            try:
-                fecha_gen_original_linked_obj = parse_date(fecha_gen_original_linked_obj, "Fecha Original Linked (DB)")
-            except ValueError:
-                fecha_gen_original_linked_obj = None
-        elif not isinstance(fecha_gen_original_linked_obj, date):
-            fecha_gen_original_linked_obj = None
-
-        if isinstance(fecha_reemplazo_db_val, str) and fecha_reemplazo_db_val:
-            try:
-                fecha_reemplazo_db_val = parse_date(fecha_reemplazo_db_val, "Fecha Reemplazo DB (DB)")
-            except ValueError:
-                fecha_reemplazo_db_val = None
-        elif not isinstance(fecha_reemplazo_db_val, date):
-            fecha_reemplazo_db_val = None
-
 
         # Cálculo de días restantes
         fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
@@ -532,20 +539,7 @@ def display_invoice_table(user_role):
         factura_data_for_action = db_ops.obtener_factura_por_id(selected_invoice_id)
         if factura_data_for_action:
             # Asegurar que los tipos de datos de fecha/hora sean correctos al cargar en session_state
-            if isinstance(factura_data_for_action.get('fecha_generacion'), str):
-                factura_data_for_action['fecha_generacion'] = parse_date(factura_data_for_action['fecha_generacion'])
-            if isinstance(factura_data_for_action.get('fecha_reemplazo'), str):
-                factura_data_for_action['fecha_reemplazo'] = parse_date(factura_data_for_action['fecha_reemplazo'])
-            if isinstance(factura_data_for_action.get('fecha_hora_entrega'), str):
-                try:
-                    factura_data_for_action['fecha_hora_entrega'] = datetime.strptime(factura_data_for_action['fecha_hora_entrega'], '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    factura_data_for_action['fecha_hora_entrega'] = None
-            if isinstance(factura_data_for_action.get('fecha_entrega_radicador'), str):
-                try:
-                    factura_data_for_action['fecha_entrega_radicador'] = datetime.strptime(factura_data_for_action['fecha_entrega_radicador'], '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    factura_data_for_action['fecha_entrega_radicador'] = None
+            factura_data_for_action = _ensure_datetime_objects(factura_data_for_action)
 
             st.session_state.current_invoice_data = factura_data_for_action
             with col_edit:
@@ -729,7 +723,7 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
         invalidate_facturas_cache()
         cancelar_edicion_action()
     else:
-        st.error(f"No se pudo actualizar la factura. El número de factura '{numero_factura}' ya podría existir.")
+        st.error(f"No se pudo actualizar la factura. El número de factura '{numero_factura}' ya podría existir con la misma combinación de Legalizador, EPS y Área de Servicio.")
 
 def cargar_factura_para_edicion_action(factura_id):
     """
@@ -738,20 +732,7 @@ def cargar_factura_para_edicion_action(factura_id):
     factura_data = db_ops.obtener_factura_por_id(factura_id)
     if factura_data:
         # Asegurar que los tipos de datos de fecha/hora sean correctos al cargar en session_state
-        if isinstance(factura_data.get('fecha_generacion'), str):
-            factura_data['fecha_generacion'] = parse_date(factura_data['fecha_generacion'])
-        if isinstance(factura_data.get('fecha_reemplazo'), str):
-            factura_data['fecha_reemplazo'] = parse_date(factura_data['fecha_reemplazo'])
-        if isinstance(factura_data.get('fecha_hora_entrega'), str):
-            try:
-                factura_data['fecha_hora_entrega'] = datetime.strptime(factura_data['fecha_hora_entrega'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_hora_entrega'] = None
-        if isinstance(factura_data.get('fecha_entrega_radicador'), str):
-            try:
-                factura_data['fecha_entrega_radicador'] = datetime.strptime(factura_data['fecha_entrega_radicador'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_entrega_radicador'] = None
+        factura_data = _ensure_datetime_objects(factura_data)
 
         st.session_state.editing_factura_id = factura_id
         st.session_state.edit_mode = True
@@ -769,20 +750,7 @@ def cargar_factura_para_refacturar_action(factura_id):
     factura_data = db_ops.obtener_factura_por_id(factura_id)
     if factura_data:
         # Asegurar que los tipos de datos de fecha/hora sean correctos al cargar en session_state
-        if isinstance(factura_data.get('fecha_generacion'), str):
-            factura_data['fecha_generacion'] = parse_date(factura_data['fecha_generacion'])
-        if isinstance(factura_data.get('fecha_reemplazo'), str):
-            factura_data['fecha_reemplazo'] = parse_date(factura_data['fecha_reemplazo'])
-        if isinstance(factura_data.get('fecha_hora_entrega'), str):
-            try:
-                factura_data['fecha_hora_entrega'] = datetime.strptime(factura_data['fecha_hora_entrega'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_hora_entrega'] = None
-        if isinstance(factura_data.get('fecha_entrega_radicador'), str):
-            try:
-                factura_data['fecha_entrega_radicador'] = datetime.strptime(factura_data['fecha_entrega_radicador'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_entrega_radicador'] = None
+        factura_data = _ensure_datetime_objects(factura_data)
 
         st.session_state.editing_factura_id = factura_id
         st.session_state.edit_mode = False

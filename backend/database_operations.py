@@ -9,6 +9,10 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_db_connection():
+    """
+    Establece y retorna una conexión a la base de datos PostgreSQL.
+    Las credenciales se obtienen de variables de entorno.
+    """
     db_host = os.environ.get("DB_HOST", "localhost") # Default to localhost for development
     db_name = os.environ.get("DB_NAME")
     db_user = os.environ.get("DB_USER")
@@ -26,7 +30,32 @@ def get_db_connection():
         logging.error(f"Error al conectar a la base de datos PostgreSQL: {e}")
         return None
 
+class DatabaseConnection:
+    """
+    Context manager para manejar la conexión a la base de datos.
+    Asegura que la conexión se cierre y las transacciones se manejen correctamente (commit/rollback).
+    """
+    def __init__(self):
+        self.conn = None
+
+    def __enter__(self):
+        self.conn = get_db_connection()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            if exc_type is None: # No hubo excepción, hacer commit
+                self.conn.commit()
+            else: # Hubo una excepción, hacer rollback
+                self.conn.rollback()
+                logging.error(f"Transacción revertida debido a un error: {exc_val}")
+            self.conn.close()
+
 def crear_tablas():
+    """
+    Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' si no existen.
+    También inserta usuarios predeterminados si no existen.
+    """
     conn = get_db_connection()
     if conn:
         try:
@@ -51,15 +80,15 @@ def crear_tablas():
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS facturas (
                         id SERIAL PRIMARY KEY,
-                        numero_factura TEXT NOT NULL, -- Eliminada la restricción UNIQUE aquí para permitir la compuesta
+                        numero_factura TEXT NOT NULL,
                         area_servicio TEXT,
                         facturador TEXT,
-                        fecha_generacion DATE, -- Cambiado a DATE
+                        fecha_generacion DATE,
                         eps TEXT,
-                        fecha_hora_entrega TIMESTAMP, -- Cambiado a TIMESTAMP
+                        fecha_hora_entrega TIMESTAMP,
                         tiene_correccion BOOLEAN DEFAULT FALSE,
                         descripcion_devolucion TEXT,
-                        fecha_devolucion_lider DATE, -- Cambiado a DATE
+                        fecha_devolucion_lider DATE,
                         revisado BOOLEAN DEFAULT FALSE,
                         factura_original_id INTEGER,
                         estado TEXT DEFAULT 'Activa',
@@ -67,8 +96,8 @@ def crear_tablas():
                         estado_auditoria TEXT DEFAULT 'Pendiente',
                         observacion_auditor TEXT,
                         tipo_error TEXT,
-                        fecha_reemplazo DATE, -- Cambiado a DATE
-                        fecha_entrega_radicador TIMESTAMP, -- Cambiado a TIMESTAMP
+                        fecha_reemplazo DATE,
+                        fecha_entrega_radicador TIMESTAMP,
                         FOREIGN KEY (factura_original_id) REFERENCES facturas(id),
                         CONSTRAINT unique_factura_details UNIQUE (numero_factura, facturador, eps, area_servicio)
                     );
@@ -77,7 +106,7 @@ def crear_tablas():
                     CREATE TABLE IF NOT EXISTS detalles_soat (
                         id SERIAL PRIMARY KEY,
                         factura_id INTEGER UNIQUE,
-                        fecha_generacion_soat DATE, -- Cambiado a DATE
+                        fecha_generacion_soat DATE,
                         FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
                     );
                 """)
@@ -90,72 +119,69 @@ def crear_tablas():
             conn.close()
 
 def obtener_credenciales_usuario(username):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene la contraseña y el rol de un usuario por su nombre de usuario.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
             with conn.cursor() as cursor:
                 cursor.execute("SELECT password, role FROM usuarios WHERE username = %s;", (username,))
                 user_data = cursor.fetchone()
                 logging.info(f"Credenciales de usuario obtenidas para '{username}'.")
                 return user_data
-        except Error as e:
-            logging.error(f"Error al obtener credenciales del usuario '{username}': {e}")
-            return None
-        finally:
-            conn.close()
-    return None
+    except Error as e:
+        logging.error(f"Error al obtener credenciales del usuario '{username}': {e}")
+        return None
 
 def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Guarda una nueva factura en la base de datos.
+    Retorna el ID de la factura insertada o None si falla (ej. duplicado).
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
             with conn.cursor() as cursor:
-                # Se elimina la verificación SELECT explícita y se confía en la restricción UNIQUE de la DB.
                 cursor.execute("""
                     INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
                     VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
                 """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
                 factura_id = cursor.fetchone()[0]
-                conn.commit()
                 logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}")
                 return factura_id
-        except errors.UniqueViolation as e:
-            conn.rollback()
-            # Mensaje más específico para la violación de la restricción compuesta
-            logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
-            return None
-        except Error as e:
-            logging.error(f"Error al guardar factura '{numero_factura}': {e}")
-            conn.rollback()
-            return None
-        finally:
-            conn.close()
-    return None
+    except errors.UniqueViolation as e:
+        logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
+        return None
+    except Error as e:
+        logging.error(f"Error al guardar factura '{numero_factura}': {e}")
+        return None
 
 def guardar_detalles_soat(factura_id, fecha_generacion_soat):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Guarda los detalles SOAT para una factura específica.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO detalles_soat (factura_id, fecha_generacion_soat)
                     VALUES (%s, %s);
                 """, (factura_id, fecha_generacion_soat))
-                conn.commit()
                 logging.info(f"Detalles SOAT guardados para factura ID: {factura_id}")
                 return True
-        except Error as e:
-            logging.error(f"Error al guardar detalles SOAT para factura ID: {factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except Error as e:
+        logging.error(f"Error al guardar detalles SOAT para factura ID: {factura_id}: {e}")
+        return False
 
 def obtener_factura_por_id(factura_id):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene los detalles de una factura por su ID.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
             with conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT
@@ -171,7 +197,6 @@ def obtener_factura_por_id(factura_id):
                     WHERE f.id = %s;
                 """, (factura_id,))
                 
-                # Obtener los nombres de las columnas para crear un diccionario
                 column_names = [desc[0] for desc in cursor.description]
                 factura_data_tuple = cursor.fetchone()
                 
@@ -180,17 +205,17 @@ def obtener_factura_por_id(factura_id):
                     logging.info(f"Factura ID: {factura_id} obtenida.")
                     return factura_data
                 return None
-        except Error as e:
-            logging.error(f"Error al obtener factura por ID {factura_id}: {e}")
-            return None
-        finally:
-            conn.close()
-    return None
+    except Error as e:
+        logging.error(f"Error al obtener factura por ID {factura_id}: {e}")
+        return None
 
 def obtener_detalles_soat_por_factura_id(factura_id):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene los detalles SOAT de una factura por su ID.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
             with conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT id, factura_id, fecha_generacion_soat
@@ -206,35 +231,22 @@ def obtener_detalles_soat_por_factura_id(factura_id):
                     logging.info(f"Detalles SOAT para factura ID: {factura_id} obtenidos.")
                     return soat_details
                 return None
-        except Error as e:
-            logging.error(f"Error al obtener detalles SOAT por factura ID {factura_id}: {e}")
-            return None
-        finally:
-            conn.close()
-    return None
+    except Error as e:
+        logging.error(f"Error al obtener detalles SOAT por factura ID {factura_id}: {e}")
+        return None
 
 def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fecha_generacion, eps,
                        fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
                        fecha_devolucion_lider, revisado, factura_original_id, estado,
                        reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Actualiza una factura existente en la base de datos.
+    Retorna True si la actualización fue exitosa, False en caso contrario.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
-                # Verificar si el número de factura ya existe para otra factura (excluyendo la actual)
-                # Ahora también se verifica la unicidad compuesta para actualizaciones
-                cursor.execute("""
-                    SELECT id FROM facturas 
-                    WHERE numero_factura = %s 
-                    AND facturador = %s 
-                    AND eps = %s 
-                    AND area_servicio = %s 
-                    AND id != %s;
-                """, (numero_factura, facturador, eps, area_servicio, factura_id))
-                if cursor.fetchone():
-                    logging.warning(f"Intento de actualizar factura con combinación duplicada: (Número: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
-                    return False
-
                 cursor.execute("""
                     UPDATE facturas SET
                         numero_factura = %s, area_servicio = %s, facturador = %s, fecha_generacion = %s, eps = %s,
@@ -248,92 +260,78 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
                       fecha_devolucion_lider, revisado, factura_original_id, estado,
                       reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo,
                       factura_id))
-                conn.commit()
+                if cursor.rowcount == 0:
+                    logging.warning(f"No se encontró la factura ID: {factura_id} para actualizar o no hubo cambios.")
+                    return False
                 logging.info(f"Factura ID: {factura_id} actualizada correctamente.")
                 return True
-        except Error as e:
-            logging.error(f"Error al actualizar factura ID: {factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except errors.UniqueViolation as e:
+        logging.warning(f"Intento de actualizar factura con combinación duplicada: (Número: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
+        return False
+    except Error as e:
+        logging.error(f"Error al actualizar factura ID: {factura_id}: {e}")
+        return False
 
 def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion, tipo_error):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Actualiza el estado de auditoría, observación y tipo de error de una factura.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
                 cursor.execute("""
                     UPDATE facturas SET
                         estado_auditoria = %s, observacion_auditor = %s, tipo_error = %s
                     WHERE id = %s;
                 """, (nuevo_estado_auditoria, observacion, tipo_error, factura_id))
-                conn.commit()
                 logging.info(f"Estado de auditoría de factura ID: {factura_id} actualizado a '{nuevo_estado_auditoria}'.")
                 return True
-        except Error as e:
-            logging.error(f"Error al actualizar estado de auditoría de factura ID: {factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except Error as e:
+        logging.error(f"Error al actualizar estado de auditoría de factura ID: {factura_id}: {e}")
+        return False
 
 def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Actualiza la fecha de entrega al radicador para una factura.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
                 cursor.execute("""
                     UPDATE facturas SET fecha_entrega_radicador = %s WHERE id = %s;
                 """, (fecha_entrega, factura_id))
-                conn.commit()
                 logging.info(f"Fecha de entrega al radicador para factura ID: {factura_id} actualizada.")
                 return True
-        except Error as e:
-            logging.error(f"Error al actualizar fecha de entrega al radicador para factura ID: {factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except Error as e:
+        logging.error(f"Error al actualizar fecha de entrega al radicador para factura ID: {factura_id}: {e}")
+        return False
 
 def eliminar_factura(factura_id):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Elimina una factura de la base de datos.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
                 cursor.execute("DELETE FROM facturas WHERE id = %s;", (factura_id,))
-                conn.commit()
                 logging.info(f"Factura ID: {factura_id} eliminada correctamente.")
                 return True
-        except Error as e:
-            logging.error(f"Error al eliminar factura ID: {factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except Error as e:
+        logging.error(f"Error al eliminar factura ID: {factura_id}: {e}")
+        return False
 
 def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
                               area_servicio, facturador, eps, fecha_reemplazo):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Guarda una factura de reemplazo y actualiza el estado de la factura original.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return False
             with conn.cursor() as cursor:
-                # Verificar si el nuevo número de factura ya existe con la misma combinación de campos
-                cursor.execute("""
-                    SELECT id FROM facturas 
-                    WHERE numero_factura = %s 
-                    AND facturador = %s 
-                    AND eps = %s 
-                    AND area_servicio = %s;
-                """, (new_numero_factura, facturador, eps, area_servicio))
-                if cursor.fetchone():
-                    logging.warning(f"Intento de guardar factura de reemplazo con combinación duplicada: (Número: '{new_numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
-                    return False
-
                 # Insertar la nueva factura de reemplazo
                 cursor.execute("""
                     INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
@@ -349,21 +347,22 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
                         estado = 'Reemplazada', reemplazada_por_numero_factura = %s, fecha_reemplazo = %s
                     WHERE id = %s;
                 """, (new_numero_factura, fecha_reemplazo, old_factura_id))
-                conn.commit()
                 logging.info(f"Factura ID: {old_factura_id} reemplazada por nueva factura ID: {new_factura_id} ({new_numero_factura}).")
                 return True
-        except Error as e:
-            logging.error(f"Error al guardar factura de reemplazo para ID original {old_factura_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    return False
+    except errors.UniqueViolation as e:
+        logging.warning(f"Intento de guardar factura de reemplazo con combinación duplicada: (Número: '{new_numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
+        return False
+    except Error as e:
+        logging.error(f"Error al guardar factura de reemplazo para ID original {old_factura_id}: {e}")
+        return False
 
 def cargar_facturas(search_term=None, search_column=None):
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Carga facturas de la base de datos, opcionalmente filtrando por un término de búsqueda y columna.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
             with conn.cursor() as cursor:
                 query = """
                     SELECT
@@ -385,26 +384,23 @@ def cargar_facturas(search_term=None, search_column=None):
                 
                 cursor.execute(query, tuple(params))
                 
-                # Obtener los nombres de las columnas
                 column_names = [desc[0] for desc in cursor.description]
-                
-                # Obtener todas las filas y convertirlas a una lista de diccionarios
                 facturas_raw = cursor.fetchall()
                 facturas = [dict(zip(column_names, row)) for row in facturas_raw]
                 
                 logging.info(f"Cargadas {len(facturas)} facturas.")
                 return facturas
-        except Error as e:
-            logging.error(f"Error al cargar facturas: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
+    except Error as e:
+        logging.error(f"Error al cargar facturas: {e}")
+        return []
 
 def obtener_conteo_facturas_por_legalizador_y_eps():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene el conteo de facturas pendientes agrupadas por legalizador y EPS.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
             with conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT facturador, eps, COUNT(id)
@@ -416,33 +412,33 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
                 stats = cursor.fetchall()
                 logging.info("Conteo de facturas pendientes por legalizador y EPS obtenido.")
                 return stats
-        except Error as e:
-            logging.error(f"Error al obtener estadísticas de facturas pendientes: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
+    except Error as e:
+        logging.error(f"Error al obtener estadísticas de facturas pendientes: {e}")
+        return []
 
 def obtener_conteo_facturas_radicadas_ok():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene el conteo total de facturas con estado 'Radicada OK'.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
             with conn.cursor() as cursor:
                 cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Radicada OK';")
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo de facturas radicadas OK: {count}")
                 return count
-        except Error as e:
-            logging.error(f"Error al obtener conteo de facturas radicadas OK: {e}")
-            return 0
-        finally:
-            conn.close()
-    return 0
+    except Error as e:
+        logging.error(f"Error al obtener conteo de facturas radicadas OK: {e}")
+        return 0
 
 def obtener_conteo_facturas_con_errores():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene el conteo total de facturas con errores (Devuelta por Auditor, Corregida por Legalizador).
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
             with conn.cursor() as cursor:
                 cursor.execute("""
                     SELECT COUNT(id) FROM facturas
@@ -451,73 +447,70 @@ def obtener_conteo_facturas_con_errores():
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo de facturas con errores: {count}")
                 return count
-        except Error as e:
-            logging.error(f"Error al obtener conteo de facturas con errores: {e}")
-            return 0
-        finally:
-            conn.close()
-    return 0
+    except Error as e:
+        logging.error(f"Error al obtener conteo de facturas con errores: {e}")
+        return 0
 
 def obtener_conteo_facturas_pendientes_global():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene el conteo total de facturas con estado 'Pendiente'.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
             with conn.cursor() as cursor:
                 cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Pendiente';")
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo total de facturas pendientes: {count}")
                 return count
-        except Error as e:
-            logging.error(f"Error al obtener conteo total de facturas pendientes: {e}")
-            return 0
-        finally:
-            conn.close()
-    return 0
+    except Error as e:
+        logging.error(f"Error al obtener conteo total de facturas pendientes: {e}")
+        return 0
 
 def obtener_conteo_total_facturas():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene el conteo total de todas las facturas.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return 0
             with conn.cursor() as cursor:
                 cursor.execute("SELECT COUNT(id) FROM facturas;")
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo total de facturas: {count}")
                 return count
-        except Error as e:
-            logging.error(f"Error al obtener conteo total de facturas: {e}")
-            return 0
-        finally:
-            conn.close()
-    return 0
+    except Error as e:
+        logging.error(f"Error al obtener conteo total de facturas: {e}")
+        return 0
 
 def obtener_facturadores_unicos():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene una lista de todos los facturadores únicos registrados en las facturas.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
             with conn.cursor() as cursor:
                 cursor.execute("SELECT DISTINCT facturador FROM facturas WHERE facturador IS NOT NULL ORDER BY facturador;")
                 facturadores = [row[0] for row in cursor.fetchall()]
                 logging.info("Facturadores únicos obtenidos.")
                 return facturadores
-        except Error as e:
-            logging.error(f"Error al obtener facturadores únicos: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
+    except Error as e:
+        logging.error(f"Error al obtener facturadores únicos: {e}")
+        return []
 
 def obtener_eps_unicas():
-    conn = get_db_connection()
-    if conn:
-        try:
+    """
+    Obtiene una lista de todas las EPS únicas registradas en las facturas.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
             with conn.cursor() as cursor:
                 cursor.execute("SELECT DISTINCT eps FROM facturas WHERE eps IS NOT NULL ORDER BY eps;")
                 epss = [row[0] for row in cursor.fetchall()]
                 logging.info("EPS únicas obtenidas.")
                 return epss
-        except Error as e:
-            logging.error(f"Error al obtener EPS únicas: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
+    except Error as e:
+        logging.error(f"Error al obtener EPS únicas: {e}")
+        return []
