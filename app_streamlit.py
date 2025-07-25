@@ -226,10 +226,10 @@ def _process_factura_for_display(factura):
     display_estado_for_tree = estado_factura
 
     # La lógica de "Vencidas" para la tabla
-    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'Radicada y Aceptada']:
+    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador']: # Eliminado 'Radicada y Aceptada'
         display_dias_restantes = "Refacturar"
         display_estado_for_tree = "Vencidas"
-    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'Radicada y Aceptada']:
+    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador']: # Eliminado 'Radicada y Aceptada'
         display_dias_restantes = "Hoy Vence"
         display_estado_for_tree = "Vencidas" # O un estado específico para hoy vence
 
@@ -444,7 +444,7 @@ def display_statistics():
     total_pendientes = db_ops.obtener_conteo_facturas_pendientes_global()
     total_lista_para_radicar = db_ops.obtener_conteo_facturas_lista_para_radicar()
     total_en_radicador = db_ops.obtener_conteo_facturas_en_radicador()
-    total_radicadas_y_aceptadas = db_ops.obtener_conteo_facturas_radicadas_y_aceptadas()
+    # total_radicadas_y_aceptadas = db_ops.obtener_conteo_facturas_radicadas_y_aceptadas() # Eliminado
     total_errores = db_ops.obtener_conteo_facturas_con_errores()
     total_general = db_ops.obtener_conteo_total_facturas()
 
@@ -457,10 +457,10 @@ def display_statistics():
         st.metric(label="Facturas En Radicador", value=total_en_radicador)
     with col2:
         st.metric(label="Facturas Lista para Radicar", value=total_lista_para_radicar)
-        st.metric(label="Facturas Radicadas y Aceptadas", value=total_radicadas_y_aceptadas)
+        st.metric(label="Facturas con Errores", value=total_errores) # Movido aquí para balancear columnas
     with col3:
-        st.metric(label="Facturas con Errores", value=total_errores)
         st.metric(label="Facturas Vencidas (Refacturar)", value=total_vencidas)
+        # st.metric(label="Facturas Radicadas y Aceptadas", value=total_radicadas_y_aceptadas) # Eliminado
 
     st.metric(label="Total General de Facturas", value=total_general)
 
@@ -600,7 +600,9 @@ def display_invoice_table(user_role):
                         tipo_error_default_index = 0
 
                 with st.form(key=f"auditoria_form_{selected_invoice_id}", clear_on_submit=False):
-                    estado_auditoria_input = st.selectbox("Estado Auditoría:", options=ESTADO_AUDITORIA_OPCIONES, index=estado_auditoria_default_index, key=f"estado_auditoria_{selected_invoice_id}")
+                    # Eliminado 'Radicada y Aceptada' de las opciones del selectbox
+                    estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES if opt != 'Radicada y Aceptada']
+                    estado_auditoria_input = st.selectbox("Estado Auditoría:", options=estado_auditoria_options_filtered, index=estado_auditoria_default_index, key=f"estado_auditoria_{selected_invoice_id}")
                     tipo_error_input = st.selectbox("Tipo de Error:", options=TIPO_ERROR_OPCIONES, index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
                     observacion_auditor_input = st.text_area("Observación Auditor:", value=st.session_state.current_invoice_data['observacion_auditor'] if st.session_state.current_invoice_data and st.session_state.current_invoice_data['observacion_auditor'] else "", key=f"observacion_auditor_{selected_invoice_id}")
                     

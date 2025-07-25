@@ -91,7 +91,6 @@ ESTADO_AUDITORIA_OPCIONES = [
     "Pendiente",
     "Lista para Radicar",  # Antes "Radicada OK" (significado de lista para radicar)
     "En Radicador",        # Nuevo estado: la factura ya fue entregada al radicador
-    "Radicada y Aceptada", # Nuevo estado: la factura ha sido radicada y aceptada (final)
     "Devuelta por Auditor",
     "Corregida por Legalizador"
 ]

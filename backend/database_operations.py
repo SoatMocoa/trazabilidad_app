@@ -464,21 +464,7 @@ def obtener_conteo_facturas_en_radicador():
         logging.error(f"Error al obtener conteo de facturas En Radicador: {e}")
         return 0
 
-def obtener_conteo_facturas_radicadas_y_aceptadas():
-    """
-    Obtiene el conteo total de facturas con estado 'Radicada y Aceptada'.
-    """
-    try:
-        with DatabaseConnection() as conn:
-            if conn is None: return 0
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT COUNT(id) FROM facturas WHERE estado_auditoria = 'Radicada y Aceptada';")
-                count = cursor.fetchone()[0]
-                logging.info(f"Conteo de facturas Radicadas y Aceptadas: {count}")
-                return count
-    except Error as e:
-        logging.error(f"Error al obtener conteo de facturas Radicadas y Aceptadas: {e}")
-        return 0
+# La función obtener_conteo_facturas_radicadas_y_aceptadas ha sido eliminada.
 
 def obtener_conteo_facturas_con_errores():
     """
@@ -535,8 +521,8 @@ def obtener_conteo_facturas_vencidas():
                 # necesitará una lógica más compleja o un campo de estado en la DB.
                 cursor.execute("""
                     SELECT COUNT(id) FROM facturas
-                    WHERE estado = 'Vencidas' AND estado_auditoria NOT IN ('Devuelta por Auditor', 'Corregida por Legalizador');
-                """)
+                    WHERE estado = 'Vencidas' AND estado_auditoria NOT IN ('Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador');
+                """) # Eliminado 'Radicada y Aceptada'
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo de facturas vencidas: {count}")
                 return count
