@@ -17,7 +17,7 @@ def get_db_connection():
     db_name = os.environ.get("DB_NAME")
     db_user = os.environ.get("DB_USER")
     db_password = os.environ.get("DB_PASSWORD")
-    db_port = os.environ.get("DB_PORT", "5432") # Standard PostgreSQL port is 5432
+    db_port = os.environ.get("DB_PORT", "6543") # Standard PostgreSQL port is 6543
 
     if not all([db_host, db_name, db_user, db_password]):
         logging.warning("ADVERTENCIA: Una o más variables de entorno de la base de datos no están configuradas. Intentando conectar con valores predeterminados o vacíos.")
