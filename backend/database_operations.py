@@ -62,61 +62,63 @@ def crear_tablas():
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS usuarios (
                         id SERIAL PRIMARY KEY,
-                        username TEXT NOT NULL UNIQUE,
-                        password TEXT NOT NULL,
-                        role TEXT NOT NULL
+                        username VARCHAR(50) NOT NULL UNIQUE,
+                        password_hash VARCHAR(255) NOT NULL,
+                        role VARCHAR(50) NOT NULL
                     );
                 """)
-                password_legalizador_hashed = hash_password('legalizador123')
-                password_auditor_hashed = hash_password('auditor123')
-                cursor.execute("""
-                    INSERT INTO usuarios (username, password, role) VALUES ('legalizador', %s, 'legalizador')
-                    ON CONFLICT (username) DO NOTHING;
-                """, (password_legalizador_hashed,))
-                cursor.execute("""
-                    INSERT INTO usuarios (username, password, role) VALUES ('auditor', %s, 'auditor')
-                    ON CONFLICT (username) DO NOTHING;
-                """, (password_auditor_hashed,))
+
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS facturas (
                         id SERIAL PRIMARY KEY,
-                        numero_factura TEXT NOT NULL,
-                        area_servicio TEXT,
-                        facturador TEXT,
-                        fecha_generacion DATE,
-                        eps TEXT,
-                        fecha_hora_entrega TIMESTAMP,
-                        tiene_correccion BOOLEAN DEFAULT FALSE,
-                        descripcion_devolucion TEXT,
-                        fecha_devolucion_lider DATE,
-                        revisado BOOLEAN DEFAULT FALSE,
+                        numero_factura VARCHAR(255) NOT NULL,
+                        area_servicio VARCHAR(255) NOT NULL,
+                        facturador VARCHAR(255) NOT NULL,
+                        fecha_generacion DATE NOT NULL,
+                        eps VARCHAR(255) NOT NULL,
+                        fecha_hora_entrega TIMESTAMP NOT NULL,
+                        estado VARCHAR(50) DEFAULT 'Pendiente',
+                        reemplazada_por_numero_factura VARCHAR(255),
                         factura_original_id INTEGER,
-                        estado TEXT DEFAULT 'Activa',
-                        reemplazada_por_numero_factura TEXT,
-                        estado_auditoria TEXT DEFAULT 'Pendiente',
-                        observacion_auditor TEXT,
-                        tipo_error TEXT,
                         fecha_reemplazo DATE,
+                        estado_auditoria VARCHAR(50) DEFAULT 'Pendiente',
+                        observacion_auditor TEXT,
+                        tipo_error VARCHAR(50),
                         fecha_entrega_radicador TIMESTAMP,
-                        FOREIGN KEY (factura_original_id) REFERENCES facturas(id),
-                        CONSTRAINT unique_factura_details UNIQUE (numero_factura, facturador, eps, area_servicio)
+                        UNIQUE (numero_factura, facturador, eps, area_servicio)
                     );
                 """)
+
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS detalles_soat (
-                        id SERIAL PRIMARY KEY,
-                        factura_id INTEGER UNIQUE,
-                        fecha_generacion_soat DATE,
+                        factura_id INTEGER PRIMARY KEY,
+                        fecha_recibido_caja DATE,
                         FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
                     );
                 """)
+                
                 conn.commit()
+
+                cursor.execute("SELECT COUNT(*) FROM usuarios")
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    usuarios_a_insertar = [
+                        ('admin', hash_password('admin'), 'auditor'),
+                        ('legalizador', hash_password('legalizador'), 'legalizador')
+                    ]
+                    
+                    cursor.executemany("INSERT INTO usuarios (username, password_hash, role) VALUES (%s, %s, %s)", usuarios_a_insertar)
+                    conn.commit()
+                
                 logging.info("Tablas verificadas/creadas y usuarios predeterminados insertados.")
+
         except Error as e:
             logging.error(f"Error al crear tablas o insertar usuarios: {e}")
-            conn.rollback()
+            if conn:
+                conn.rollback()
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
 def obtener_credenciales_usuario(username):
     try:

@@ -14,7 +14,11 @@ from config.constants import (
 st.set_page_config(layout="wide")
 
 # Inicializa las tablas y los usuarios por defecto
-db_ops.crear_tablas()
+try:
+    db_ops.crear_tablas()
+except Exception as e:
+    st.error(f"Error crítico al inicializar la base de datos: {e}")
+    st.stop()
 
 if not os.path.exists('data'):
     os.makedirs('data')
