@@ -1,23 +1,18 @@
 import os
 import psycopg2
 from psycopg2 import Error
-from psycopg2 import errors # Importar errores específicos de psycopg2
+from psycopg2 import errors
 from datetime import datetime
 import logging
 
-# Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_db_connection():
-    """
-    Establece y retorna una conexión a la base de datos PostgreSQL.
-    Las credenciales se obtienen de variables de entorno.
-    """
-    db_host = os.environ.get("DB_HOST", "localhost") # Default to localhost for development
+    db_host = os.environ.get("DB_HOST", "localhost")
     db_name = os.environ.get("DB_NAME")
     db_user = os.environ.get("DB_USER")
     db_password = os.environ.get("DB_PASSWORD")
-    db_port = os.environ.get("DB_PORT", "6543") # Standard PostgreSQL port is 6543
+    db_port = os.environ.get("DB_PORT", "6543")
 
     if not all([db_host, db_name, db_user, db_password]):
         logging.warning("ADVERTENCIA: Una o más variables de entorno de la base de datos no están configuradas. Intentando conectar con valores predeterminados o vacíos.")
@@ -31,10 +26,6 @@ def get_db_connection():
         return None
 
 class DatabaseConnection:
-    """
-    Context manager para manejar la conexión a la base de datos.
-    Asegura que la conexión se cierre y las transacciones se manejen correctamente (commit/rollback).
-    """
     def __init__(self):
         self.conn = None
 
@@ -44,18 +35,14 @@ class DatabaseConnection:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.conn:
-            if exc_type is None: # No hubo excepción, hacer commit
+            if exc_type is None:
                 self.conn.commit()
-            else: # Hubo una excepción, hacer rollback
+            else:
                 self.conn.rollback()
                 logging.error(f"Transacción revertida debido a un error: {exc_val}")
             self.conn.close()
 
 def crear_tablas():
-    """
-    Crea las tablas 'usuarios', 'facturas' y 'detalles_soat' si no existen.
-    También inserta usuarios predeterminados si no existen.
-    """
     conn = get_db_connection()
     if conn:
         try:
@@ -119,9 +106,6 @@ def crear_tablas():
             conn.close()
 
 def obtener_credenciales_usuario(username):
-    """
-    Obtiene la contraseña y el rol de un usuario por su nombre de usuario.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
@@ -135,10 +119,6 @@ def obtener_credenciales_usuario(username):
         return None
 
 def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega):
-    """
-    Guarda una nueva factura en la base de datos.
-    Retorna el ID de la factura insertada o None si falla (ej. duplicado).
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
@@ -158,9 +138,6 @@ def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion,
         return None
 
 def guardar_detalles_soat(factura_id, fecha_generacion_soat):
-    """
-    Guarda los detalles SOAT para una factura específica.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
@@ -176,9 +153,6 @@ def guardar_detalles_soat(factura_id, fecha_generacion_soat):
         return False
 
 def obtener_factura_por_id(factura_id):
-    """
-    Obtiene los detalles de una factura por su ID.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
@@ -210,9 +184,6 @@ def obtener_factura_por_id(factura_id):
         return None
 
 def obtener_detalles_soat_por_factura_id(factura_id):
-    """
-    Obtiene los detalles SOAT de una factura por su ID.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
@@ -239,10 +210,6 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
                        fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
                        fecha_devolucion_lider, revisado, factura_original_id, estado,
                        reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
-    """
-    Actualiza una factura existente en la base de datos.
-    Retorna True si la actualización fue exitosa, False en caso contrario.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
@@ -273,9 +240,6 @@ def actualizar_factura(factura_id, numero_factura, area_servicio, facturador, fe
         return False
 
 def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion, tipo_error):
-    """
-    Actualiza el estado de auditoría, observación y tipo de error de una factura.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
@@ -292,26 +256,18 @@ def actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, obse
         return False
 
 def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
-    """
-    Actualiza la fecha de entrega al radicador para una factura.
-    También actualiza el estado de auditoría a 'En Radicador' si se establece una fecha,
-    o a 'Lista para Radicar' si se elimina la fecha.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
             with conn.cursor() as cursor:
-                # Obtener el estado actual de la factura
                 cursor.execute("SELECT estado_auditoria FROM facturas WHERE id = %s;", (factura_id,))
                 current_estado = cursor.fetchone()[0]
 
                 new_estado_auditoria = current_estado
                 if fecha_entrega is not None:
-                    # Si se está entregando al radicador, el estado pasa a 'En Radicador'
                     if current_estado == 'Lista para Radicar':
                         new_estado_auditoria = 'En Radicador'
                 else:
-                    # Si se está quitando la fecha de entrega, el estado vuelve a 'Lista para Radicar'
                     if current_estado == 'En Radicador':
                         new_estado_auditoria = 'Lista para Radicar'
 
@@ -325,9 +281,6 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
         return False
 
 def eliminar_factura(factura_id):
-    """
-    Elimina una factura de la base de datos.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
@@ -341,23 +294,19 @@ def eliminar_factura(factura_id):
 
 def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
                               area_servicio, facturador, eps, fecha_reemplazo):
-    """
-    Guarda una factura de reemplazo y actualiza el estado de la factura original.
-    """
+
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False
             with conn.cursor() as cursor:
-                # Insertar la nueva factura de reemplazo
                 cursor.execute("""
                     INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
                                           fecha_hora_entrega, factura_original_id, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
                 """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
-                      datetime.now(), old_factura_id, 'Activa')) # fecha_hora_entrega se establece a la hora actual de ingreso
+                      datetime.now(), old_factura_id, 'Activa'))
                 new_factura_id = cursor.fetchone()[0]
 
-                # Actualizar el estado de la factura original
                 cursor.execute("""
                     UPDATE facturas SET
                         estado = 'Reemplazada', reemplazada_por_numero_factura = %s, fecha_reemplazo = %s
@@ -373,9 +322,6 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
         return False
 
 def cargar_facturas(search_term=None, search_column=None):
-    """
-    Carga facturas de la base de datos, opcionalmente filtrando por un término de búsqueda y columna.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
@@ -411,9 +357,6 @@ def cargar_facturas(search_term=None, search_column=None):
         return []
 
 def obtener_conteo_facturas_por_legalizador_y_eps():
-    """
-    Obtiene el conteo de facturas pendientes agrupadas por legalizador y EPS.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
@@ -433,9 +376,6 @@ def obtener_conteo_facturas_por_legalizador_y_eps():
         return []
 
 def obtener_conteo_facturas_lista_para_radicar():
-    """
-    Obtiene el conteo total de facturas con estado 'Lista para Radicar'.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
@@ -449,9 +389,6 @@ def obtener_conteo_facturas_lista_para_radicar():
         return 0
 
 def obtener_conteo_facturas_en_radicador():
-    """
-    Obtiene el conteo total de facturas con estado 'En Radicador'.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
@@ -464,12 +401,7 @@ def obtener_conteo_facturas_en_radicador():
         logging.error(f"Error al obtener conteo de facturas En Radicador: {e}")
         return 0
 
-# La función obtener_conteo_facturas_radicadas_y_aceptadas ha sido eliminada.
-
 def obtener_conteo_facturas_con_errores():
-    """
-    Obtiene el conteo total de facturas con errores (Devuelta por Auditor, Corregida por Legalizador).
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
@@ -486,9 +418,6 @@ def obtener_conteo_facturas_con_errores():
         return 0
 
 def obtener_conteo_facturas_pendientes_global():
-    """
-    Obtiene el conteo total de facturas con estado 'Pendiente'.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
@@ -502,27 +431,14 @@ def obtener_conteo_facturas_pendientes_global():
         return 0
 
 def obtener_conteo_facturas_vencidas():
-    """
-    Obtiene el conteo de facturas que están en estado 'Vencidas' o 'Refacturar'
-    (basado en la lógica de días restantes < 0).
-    Nota: Esto requiere que la lógica de "vencidas" se refleje en un estado
-    de auditoría o se calcule dinámicamente en la DB si es posible.
-    Por ahora, se asume que las 'Vencidas' son las marcadas como 'Refacturar'
-    en la lógica de la UI, o que se puede inferir.
-    Para una mayor precisión, se recomienda un estado explícito en DB si es posible.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
             with conn.cursor() as cursor:
-                # Esta consulta asume que 'estado' se actualiza a 'Vencidas'
-                # o que hay una forma de identificar las vencidas directamente en la DB.
-                # Si 'Vencidas' es solo una etiqueta de la UI, esta consulta
-                # necesitará una lógica más compleja o un campo de estado en la DB.
                 cursor.execute("""
                     SELECT COUNT(id) FROM facturas
                     WHERE estado = 'Vencidas' AND estado_auditoria NOT IN ('Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador');
-                """) # Eliminado 'Radicada y Aceptada'
+                """)
                 count = cursor.fetchone()[0]
                 logging.info(f"Conteo de facturas vencidas: {count}")
                 return count
@@ -531,9 +447,6 @@ def obtener_conteo_facturas_vencidas():
         return 0
 
 def obtener_conteo_total_facturas():
-    """
-    Obtiene el conteo total de todas las facturas.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return 0
@@ -547,9 +460,6 @@ def obtener_conteo_total_facturas():
         return 0
 
 def obtener_facturadores_unicos():
-    """
-    Obtiene una lista de todos los facturadores únicos registrados en las facturas.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
@@ -563,9 +473,6 @@ def obtener_facturadores_unicos():
         return []
 
 def obtener_eps_unicas():
-    """
-    Obtiene una lista de todas las EPS únicas registradas en las facturas.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
