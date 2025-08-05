@@ -386,11 +386,16 @@ def highlight_rows(row):
         styles = ['background-color: lightsalmon'] * len(row)
     elif row["Días Restantes"] == "Refacturar":
         styles = ['background-color: salmon'] * len(row)
-    elif isinstance(row["Días Restantes"], (int, float)):
-        if 1 <= row["Días Restantes"] <= 3:
-            styles = ['background-color: yellow'] * len(row)
-        elif row["Días Restantes"] > 3:
-            styles = ['background-color: lightgreen'] * len(row)
+    else:
+        try:
+            dias_restantes_num = int(row["Días Restantes"])
+            if 1 <= dias_restantes_num <= 3:
+                styles = ['background-color: yellow'] * len(row)
+            elif dias_restantes_num > 3:
+                styles = ['background-color: lightgreen'] * len(row)
+        except ValueError:
+            # No es un número, se ignora
+            pass
     return styles
 
 def display_invoice_table(user_role):
