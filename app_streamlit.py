@@ -10,45 +10,168 @@ from config.constants import (
     FACTURADORES, EPS_OPCIONES, AREA_SERVICIO_OPCIONES,
     ESTADO_AUDITORIA_OPCIONES, TIPO_ERROR_OPCIONES
 )
+import numpy as np
 
+# --- Configuración y Estado Inicial ---
 st.set_page_config(layout="wide")
 db_ops.crear_tablas()
 
 if not os.path.exists('data'):
     os.makedirs('data')
 
-if 'selected_invoice_input_key' not in st.session_state:
-    st.session_state.selected_invoice_input_key = 0
-if 'filter_text_key' not in st.session_state:
-    st.session_state.filter_text_key = 0
-if 'filter_select_key' not in st.session_state:
-    st.session_state.filter_select_key = 0
-if 'editing_factura_id' not in st.session_state:
-    st.session_state.editing_factura_id = None
-if 'edit_mode' not in st.session_state:
-    st.session_state.edit_mode = False
-if 'refacturar_mode' not in st.session_state:
-    st.session_state.refacturar_mode = False
-if 'current_invoice_data' not in st.session_state:
-    st.session_state.current_invoice_data = None
-if 'form_key' not in st.session_state:
-    st.session_state.form_key = 0
-if 'confirm_delete_id' not in st.session_state:
-    st.session_state.confirm_delete_id = None
-if 'bulk_facturador_key' not in st.session_state:
-    st.session_state.bulk_facturador_key = 0
-if 'bulk_eps_key' not in st.session_state:
-    st.session_state.bulk_eps_key = 0
-if 'bulk_area_servicio_key' not in st.session_state:
-    st.session_state.bulk_area_servicio_key = 0
+# Inicialización de todos los estados de sesión
+def initialize_session_state():
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+    if 'selected_invoice_input_key' not in st.session_state:
+        st.session_state.selected_invoice_input_key = 0
+    if 'filter_text_key' not in st.session_state:
+        st.session_state.filter_text_key = 0
+    if 'filter_select_key' not in st.session_state:
+        st.session_state.filter_select_key = 0
+    if 'editing_factura_id' not in st.session_state:
+        st.session_state.editing_factura_id = None
+    if 'edit_mode' not in st.session_state:
+        st.session_state.edit_mode = False
+    if 'refacturar_mode' not in st.session_state:
+        st.session_state.refacturar_mode = False
+    if 'current_invoice_data' not in st.session_state:
+        st.session_state.current_invoice_data = None
+    if 'form_key' not in st.session_state:
+        st.session_state.form_key = 0
+    if 'confirm_delete_id' not in st.session_state:
+        st.session_state.confirm_delete_id = None
+    if 'bulk_facturador_key' not in st.session_state:
+        st.session_state.bulk_facturador_key = 0
+    if 'bulk_eps_key' not in st.session_state:
+        st.session_state.bulk_eps_key = 0
+    if 'bulk_area_servicio_key' not in st.session_state:
+        st.session_state.bulk_area_servicio_key = 0
 
+initialize_session_state()
+
+# --- Funciones de Caching (Optimizadas) ---
+@st.cache_data(ttl=60)
+def get_cached_facturas(search_term, search_column):
+    return db_ops.cargar_facturas(search_term, search_column)
+
+@st.cache_data(ttl=300)
+def get_cached_statistics():
+    return {
+        "total_pendientes": db_ops.obtener_conteo_facturas_pendientes_global(),
+        "total_lista_para_radicar": db_ops.obtener_conteo_facturas_lista_para_radicar(),
+        "total_en_radicador": db_ops.obtener_conteo_facturas_en_radicador(),
+        "total_errores": db_ops.obtener_conteo_facturas_con_errores(),
+        "total_general": db_ops.obtener_conteo_total_facturas(),
+        "stats_por_legalizador_eps": db_ops.obtener_conteo_facturas_por_legalizador_y_eps()
+    }
+
+def invalidate_all_caches():
+    get_cached_facturas.clear()
+    get_cached_statistics.clear()
+
+# --- Funciones de Lógica de la Aplicación ---
+def get_selectbox_default_index(options_list, current_value):
+    if current_value:
+        try:
+            return options_list.index(current_value) + 1
+        except ValueError:
+            pass
+    return 0
+
+def _process_factura_for_display_df(df_raw):
+    # Convertir a DataFrame si no lo es
+    if not isinstance(df_raw, pd.DataFrame):
+        df = pd.DataFrame(df_raw)
+    else:
+        df = df_raw.copy()
+        
+    hoy = date.today()
+
+    # Conversión de tipos de forma vectorizada
+    df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'], errors='coerce').dt.date
+    df['fecha_reemplazo'] = pd.to_datetime(df['fecha_reemplazo'], errors='coerce').dt.date
+    df['fecha_hora_entrega'] = pd.to_datetime(df['fecha_hora_entrega'], errors='coerce')
+    df['fecha_entrega_radicador'] = pd.to_datetime(df['fecha_entrega_radicador'], errors='coerce')
+    df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce').dt.date
+
+    # Lógica vectorizada para calcular la fecha límite
+    df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
+    
+    # Lógica vectorizada para los días restantes
+    df['Días Restantes_temp'] = df.apply(
+        lambda row: calcular_dias_habiles_entre_fechas(row['fecha_limite_liquidacion_obj'], hoy) * -1
+                    if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
+                    else calcular_dias_habiles_entre_fechas(hoy, row['fecha_limite_liquidacion_obj'])
+                    if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
+        axis=1
+    )
+
+    # Asignar valores de texto de forma vectorizada
+    df['Días Restantes'] = df['Días Restantes_temp']
+    
+    df.loc[(df['Días Restantes_temp'] < 0) & 
+           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
+           'Días Restantes'] = "Refacturar"
+    df.loc[(df['Días Restantes_temp'] == 0) & 
+           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
+           'Días Restantes'] = "Hoy Vence"
+    
+    # Lógica de reemplazo de factura y display
+    df['Número de Factura'] = np.where(df['factura_original_id'].notnull(), df['num_fact_original_linked'], df['numero_factura'])
+    df['Número Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['numero_factura'],
+                                              np.where(df['estado'] == 'Reemplazada', df['reemplazada_por_numero_factura'], ""))
+
+    # Asegurar que las columnas de fecha sean de tipo datetime antes de formatear
+    df['Fecha Generación'] = np.where(df['factura_original_id'].notnull(), df['fecha_gen_original_linked'], df['fecha_generacion'])
+    df['Fecha Generación'] = pd.to_datetime(df['Fecha Generación'], errors='coerce')
+    
+    df['Fecha Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['fecha_generacion'],
+                                              np.where(df['estado'] == 'Reemplazada', df['fecha_reemplazo'], ""))
+    df['Fecha Reemplazo Factura'] = pd.to_datetime(df['Fecha Reemplazo Factura'], errors='coerce')
+
+    df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
+    
+    # Asignar estado "Vencidas" de forma vectorizada
+    df['Estado_for_tree'] = df['Estado']
+    df.loc[df['Días Restantes'] == "Refacturar", 'Estado_for_tree'] = "Vencidas"
+    df.loc[df['Días Restantes'] == "Hoy Vence", 'Estado_for_tree'] = "Vencidas"
+
+    # Conversión final de los campos de fecha a string para display
+    df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
+    df['Fecha Reemplazo Factura'] = df['Fecha Reemplazo Factura'].dt.strftime('%Y-%m-%d').fillna('')
+    df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+    df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+    df['Estado'] = df['Estado_for_tree']
+    
+    # Conversión a string para evitar el error de pyarrow
+    df['Días Restantes'] = df['Días Restantes'].astype(str)
+
+    # Renombrar columnas para la tabla final
+    df = df.rename(columns={
+        'id': 'ID',
+        'area_servicio': 'Área de Servicio',
+        'facturador': 'Facturador',
+        'eps': 'EPS',
+        'estado_auditoria': 'Estado Auditoria',
+        'tipo_error': 'Tipo de Error',
+        'observacion_auditor': 'Observación Auditor'
+    })
+
+    return df[[
+        'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
+        'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
+        'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
+        'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
+    ]]
+
+# --- Funciones para la UI ---
 def login_page():
     st.title("Iniciar Sesión - Trazabilidad de Facturas")
     with st.form("login_form"):
         username = st.text_input("Usuario:")
         password = st.text_input("Contraseña:", type="password")
         submitted = st.form_submit_button("Entrar")
-
         if submitted:
             user_data = db_ops.obtener_credenciales_usuario(username)
             if user_data:
@@ -69,9 +192,9 @@ def main_app_page():
     user_role = st.session_state.get('user_role', 'guest')
     st.sidebar.header(f"Bienvenido, {st.session_state.get('username')} ({user_role})")
     if st.sidebar.button("Cerrar Sesión"):
-        st.session_state['logged_in'] = False
-        st.session_state['username'] = None
-        st.session_state['user_role'] = None
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.session_state.user_role = None
         st.rerun()
 
     tab1, tab2, tab3 = st.tabs(["Ingreso Individual", "Carga Masiva", "Estadísticas"])
@@ -89,141 +212,21 @@ def main_app_page():
     st.header("Facturas Registradas")
     display_invoice_table(user_role)
 
-def get_selectbox_default_index(options_list, current_value):
-    if current_value:
-        try:
-            return options_list.index(current_value) + 1
-        except ValueError:
-            pass
-    return 0
-
-def _ensure_datetime_objects(factura_data):
-    if factura_data:
-        if isinstance(factura_data.get('fecha_generacion'), str):
-            factura_data['fecha_generacion'] = parse_date(factura_data['fecha_generacion'])
-        elif factura_data.get('fecha_generacion') is None:
-            factura_data['fecha_generacion'] = date.today()
-
-        if isinstance(factura_data.get('fecha_reemplazo'), str):
-            factura_data['fecha_reemplazo'] = parse_date(factura_data['fecha_reemplazo'])
-        
-        if isinstance(factura_data.get('fecha_hora_entrega'), str) and factura_data['fecha_hora_entrega']:
-            try:
-                factura_data['fecha_hora_entrega'] = datetime.strptime(factura_data['fecha_hora_entrega'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_hora_entrega'] = None
-        elif not isinstance(factura_data.get('fecha_hora_entrega'), datetime):
-            factura_data['fecha_hora_entrega'] = None
-
-        if isinstance(factura_data.get('fecha_entrega_radicador'), str) and factura_data['fecha_entrega_radicador']:
-            try:
-                factura_data['fecha_entrega_radicador'] = datetime.strptime(factura_data['fecha_entrega_radicador'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                factura_data['fecha_entrega_radicador'] = None
-        elif not isinstance(factura_data.get('fecha_entrega_radicador'), datetime):
-            factura_data['fecha_entrega_radicador'] = None
-
-        if isinstance(factura_data.get('fecha_gen_original_linked'), str) and factura_data['fecha_gen_original_linked']:
-            factura_data['fecha_gen_original_linked'] = parse_date(factura_data['fecha_gen_original_linked'])
-        elif not isinstance(factura_data.get('fecha_gen_original_linked'), date):
-            factura_data['fecha_gen_original_linked'] = None
-    return factura_data
-
-def _process_factura_for_display(factura):
-    factura = _ensure_datetime_objects(factura)
-    factura_id = factura.get('id')
-    numero_factura_base = factura.get('numero_factura', '')
-    area_servicio = factura.get('area_servicio', '')
-    facturador_nombre = factura.get('facturador', '')
-    fecha_generacion_base_obj = factura.get('fecha_generacion') 
-    eps_nombre = factura.get('eps', '')
-    fecha_hora_entrega = factura.get('fecha_hora_entrega') 
-    estado_factura = factura.get('estado', '')
-    reemplazada_por_numero = factura.get('reemplazada_por_numero_factura', '')
-    estado_auditoria_db = factura.get('estado_auditoria', 'Pendiente')
-    observacion_auditor_db = factura.get('observacion_auditor', '')
-    tipo_error_db = factura.get('tipo_error', '')
-    fecha_reemplazo_db_val = factura.get('fecha_reemplazo') 
-    num_fact_original_linked = factura.get('num_fact_original_linked', '')
-    fecha_gen_original_linked_obj = factura.get('fecha_gen_original_linked') 
-    fecha_entrega_radicador_db = factura.get('fecha_entrega_radicador')
-    hoy_obj = date.today()
-
-    fecha_limite_liquidacion_obj = sumar_dias_habiles(fecha_generacion_base_obj, 21)
-    dias_restantes_liquidacion = 0
-    if hoy_obj <= fecha_limite_liquidacion_obj:
-        dias_restantes_liquidacion = calcular_dias_habiles_entre_fechas(hoy_obj, fecha_limite_liquidacion_obj)
-    else:
-        dias_pasados_del_limite = calcular_dias_habiles_entre_fechas(fecha_limite_liquidacion_obj, hoy_obj)
-        dias_restantes_liquidacion = -dias_pasados_del_limite
-
-    display_numero_factura_col = ""
-    display_numero_reemplazo_col = ""
-    display_fecha_generacion_actual_col = ""
-    display_fecha_reemplazo_display = ""
-
-    if factura.get('factura_original_id') is not None:
-        display_numero_factura_col = num_fact_original_linked
-        display_numero_reemplazo_col = numero_factura_base
-        display_fecha_generacion_actual_col = fecha_gen_original_linked_obj.strftime('%Y-%m-%d') if fecha_gen_original_linked_obj else ""
-        display_fecha_reemplazo_display = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else "" # Fecha de la nueva factura
-    elif estado_factura == 'Reemplazada':
-        display_numero_factura_col = numero_factura_base
-        display_numero_reemplazo_col = reemplazada_por_numero
-        display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
-        display_fecha_reemplazo_display = fecha_reemplazo_db_val.strftime('%Y-%m-%d') if fecha_reemplazo_db_val else ""
-    else:
-        display_numero_factura_col = numero_factura_base
-        display_numero_reemplazo_col = ""
-        display_fecha_generacion_actual_col = fecha_generacion_base_obj.strftime('%Y-%m-%d') if fecha_generacion_base_obj else ""
-        display_fecha_reemplazo_display = ""
-
-    display_dias_restantes = dias_restantes_liquidacion
-    display_estado_for_tree = estado_factura
-
-    if dias_restantes_liquidacion < 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador']: # Eliminado 'Radicada y Aceptada'
-        display_dias_restantes = "Refacturar"
-        display_estado_for_tree = "Vencidas"
-    elif dias_restantes_liquidacion == 0 and estado_auditoria_db not in ['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador']: # Eliminado 'Radicada y Aceptada'
-        display_dias_restantes = "Hoy Vence"
-        display_estado_for_tree = "Vencidas"
-
-    return {
-        "ID": factura_id,
-        "Área de Servicio": area_servicio,
-        "Facturador": facturador_nombre,
-        "EPS": eps_nombre,
-        "Número de Factura": display_numero_factura_col,
-        "Número Reemplazo Factura": display_numero_reemplazo_col,
-        "Fecha Generación": display_fecha_generacion_actual_col,
-        "Fecha Reemplazo Factura": display_fecha_reemplazo_display,
-        "Fecha de Entrega": fecha_hora_entrega.strftime('%Y-%m-%d %H:%M:%S') if fecha_hora_entrega else "",
-        "Días Restantes": display_dias_restantes,
-        "Estado": display_estado_for_tree,
-        "Estado Auditoria": estado_auditoria_db,
-        "Tipo de Error": tipo_error_db,
-        "Observación Auditor": observacion_auditor_db,
-        "Fecha Entrega Radicador": fecha_entrega_radicador_db.strftime('%Y-%m-%d %H:%M:%S') if fecha_entrega_radicador_db else ""
-    }
-
 def display_invoice_entry_form(user_role):
-    current_data = st.session_state.current_invoice_data 
+    current_data = st.session_state.current_invoice_data
     fecha_generacion_val = current_data['fecha_generacion'].strftime('%Y-%m-%d') if current_data and isinstance(current_data.get('fecha_generacion'), date) else ""
 
     with st.form(key=f"invoice_entry_form_{st.session_state.form_key}", clear_on_submit=False):
-        facturador = st.selectbox("Legalizador:", options=[""] + FACTURADORES, 
-                                  index=get_selectbox_default_index(FACTURADORES, current_data.get('facturador')) if current_data and not st.session_state.refacturar_mode else 0, 
+        facturador = st.selectbox("Legalizador:", options=[""] + FACTURADORES,
+                                  index=get_selectbox_default_index(FACTURADORES, current_data.get('facturador')) if current_data and not st.session_state.refacturar_mode else 0,
                                   disabled=st.session_state.refacturar_mode)
-
-        eps = st.selectbox("EPS:", options=[""] + EPS_OPCIONES, 
-                           index=get_selectbox_default_index(EPS_OPCIONES, current_data.get('eps')) if current_data and not st.session_state.refacturar_mode else 0, 
+        eps = st.selectbox("EPS:", options=[""] + EPS_OPCIONES,
+                           index=get_selectbox_default_index(EPS_OPCIONES, current_data.get('eps')) if current_data and not st.session_state.refacturar_mode else 0,
                            disabled=st.session_state.refacturar_mode)
-
         numero_factura = st.text_input("Número de Factura:", value=current_data['numero_factura'] if current_data and not st.session_state.refacturar_mode else "", disabled=st.session_state.refacturar_mode)
         fecha_generacion = st.text_input("Fecha de Generación (YYYY-MM-DD o DD/MM/YYYY):", value=fecha_generacion_val, disabled=st.session_state.refacturar_mode)
-
-        area_servicio = st.selectbox("Área de Servicio:", options=[""] + AREA_SERVICIO_OPCIONES, 
-                                     index=get_selectbox_default_index(AREA_SERVICIO_OPCIONES, current_data.get('area_servicio')) if current_data and not st.session_state.refacturar_mode else 0, 
+        area_servicio = st.selectbox("Área de Servicio:", options=[""] + AREA_SERVICIO_OPCIONES,
+                                     index=get_selectbox_default_index(AREA_SERVICIO_OPCIONES, current_data.get('area_servicio')) if current_data and not st.session_state.refacturar_mode else 0,
                                      disabled=st.session_state.refacturar_mode)
         if st.session_state.refacturar_mode:
             st.markdown("---")
@@ -259,7 +262,6 @@ def display_invoice_entry_form(user_role):
             elif st.session_state.edit_mode:
                 original_data = db_ops.obtener_factura_por_id(st.session_state.editing_factura_id)
                 if original_data:
-                    original_data = _ensure_datetime_objects(original_data)
                     actualizar_factura_action(
                         st.session_state.editing_factura_id,
                         numero_factura,
@@ -267,18 +269,18 @@ def display_invoice_entry_form(user_role):
                         facturador,
                         fecha_generacion,
                         eps,
-                        original_data['fecha_hora_entrega'],
-                        original_data['tiene_correccion'],
-                        original_data['descripcion_devolucion'],
-                        original_data['fecha_devolucion_lider'],
-                        original_data['revisado'],
-                        original_data['factura_original_id'],
-                        original_data['estado'],
-                        original_data['reemplazada_por_numero_factura'],
-                        original_data['estado_auditoria'],
-                        original_data['observacion_auditor'],
-                        original_data['tipo_error'],
-                        original_data['fecha_reemplazo']
+                        original_data.get('fecha_hora_entrega'),
+                        original_data.get('tiene_correccion'),
+                        original_data.get('descripcion_devolucion'),
+                        original_data.get('fecha_devolucion_lider'),
+                        original_data.get('revisado'),
+                        original_data.get('factura_original_id'),
+                        original_data.get('estado'),
+                        original_data.get('reemplazada_por_numero_factura'),
+                        original_data.get('estado_auditoria'),
+                        original_data.get('observacion_auditor'),
+                        original_data.get('tipo_error'),
+                        original_data.get('fecha_reemplazo')
                     )
                 else:
                     st.error("Error: No se pudo recuperar la factura original para actualizar.")
@@ -292,7 +294,6 @@ def display_bulk_load_section():
         facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES, key=f"bulk_facturador_selector_{st.session_state.bulk_facturador_key}")
         eps_bulk = st.selectbox("EPS (CSV):", options=[""] + EPS_OPCIONES, key=f"bulk_eps_selector_{st.session_state.bulk_eps_key}")
         area_servicio_bulk = st.selectbox("Área de Servicio (CSV):", options=[""] + AREA_SERVICIO_OPCIONES, key=f"bulk_area_servicio_selector_{st.session_state.bulk_area_servicio_key}")
-        
         st.write("Cargar archivo CSV (columnas requeridas: Numero de Factura, Fecha de Generacion)")
         uploaded_file = st.file_uploader("Cargar archivo CSV", type=["csv"])
         bulk_submitted = st.form_submit_button("Cargar desde CSV")
@@ -301,12 +302,8 @@ def display_bulk_load_section():
             if not facturador_bulk or not eps_bulk or not area_servicio_bulk:
                 st.error("Por favor, selecciona Legalizador, EPS y Área de Servicio para la carga masiva.")
                 return
-
-            inserted_count = 0
-            skipped_count = 0
-            total_rows = 0
+            inserted_count, skipped_count, total_rows = 0, 0, 0
             df = pd.read_csv(uploaded_file)
-
             required_columns_csv = ['Numero de Factura', 'Fecha de Generacion']
             if not all(col in df.columns for col in required_columns_csv):
                 st.error(f"El archivo CSV debe contener las columnas: {', '.join(required_columns_csv)}.")
@@ -314,37 +311,28 @@ def display_bulk_load_section():
 
             st.write(f"Iniciando carga masiva desde: {uploaded_file.name}")
             st.write(f"Facturador global: {facturador_bulk}, EPS global: {eps_bulk}, Área de Servicio global: {area_servicio_bulk}")
-
             for index, row in df.iterrows():
                 total_rows += 1
                 numero_factura_csv = str(row['Numero de Factura']).strip()
                 fecha_str_csv = str(row['Fecha de Generacion']).strip()
-
                 if not numero_factura_csv.isdigit():
                     st.warning(f"Fila {index+2}: Número de factura '{numero_factura_csv}' no es numérico. Saltando.")
                     skipped_count += 1
                     continue
-
                 fecha_generacion_csv_obj = parse_date(fecha_str_csv, f"Fecha de Generación (Fila {index+2})")
-                if fecha_generacion_csv_obj is None:
+                if fecha_generacion_csv_obj is None or not validate_future_date(fecha_generacion_csv_obj, f"Fecha de Generación (Fila {index+2})"):
                     skipped_count += 1
                     continue
-                if not validate_future_date(fecha_generacion_csv_obj, f"Fecha de Generación (Fila {index+2})"):
-                    skipped_count += 1
-                    continue
-
                 fecha_generacion_db = fecha_generacion_csv_obj
                 fecha_hora_entrega_db = datetime.now()
-
                 factura_id = db_ops.guardar_factura(
-                    numero_factura=numero_factura_csv, 
-                    area_servicio=area_servicio_bulk, 
-                    facturador=facturador_bulk, 
-                    fecha_generacion=fecha_generacion_db, 
-                    eps=eps_bulk, 
+                    numero_factura=numero_factura_csv,
+                    area_servicio=area_servicio_bulk,
+                    facturador=facturador_bulk,
+                    fecha_generacion=fecha_generacion_db,
+                    eps=eps_bulk,
                     fecha_hora_entrega=fecha_hora_entrega_db
                 )
-
                 if factura_id:
                     if area_servicio_bulk == "SOAT":
                         db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
@@ -352,9 +340,8 @@ def display_bulk_load_section():
                 else:
                     skipped_count += 1
                     st.info(f"Fila {index+2}: Factura '{numero_factura_csv}' ya existe o hubo un error al insertar. Saltando.")
-
             st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
-            invalidate_facturas_cache()
+            invalidate_all_caches()
             st.session_state.bulk_facturador_key += 1
             st.session_state.bulk_eps_key += 1
             st.session_state.bulk_area_servicio_key += 1
@@ -362,17 +349,14 @@ def display_bulk_load_section():
 
 def display_statistics():
     st.subheader("Estadísticas Generales de Facturas")
-    all_facturas_raw = db_ops.cargar_facturas()
-    processed_facturas_for_stats = [_process_factura_for_display(f) for f in all_facturas_raw]
-
-    total_pendientes = db_ops.obtener_conteo_facturas_pendientes_global()
-    total_lista_para_radicar = db_ops.obtener_conteo_facturas_lista_para_radicar()
-    total_en_radicador = db_ops.obtener_conteo_facturas_en_radicador()
-    total_errores = db_ops.obtener_conteo_facturas_con_errores()
-    total_general = db_ops.obtener_conteo_total_facturas()
-
-    total_vencidas = sum(1 for f in processed_facturas_for_stats if f["Días Restantes"] == "Refacturar")
-
+    stats_data = get_cached_statistics()
+    total_pendientes = stats_data["total_pendientes"]
+    total_lista_para_radicar = stats_data["total_lista_para_radicar"]
+    total_en_radicador = stats_data["total_en_radicador"]
+    total_errores = stats_data["total_errores"]
+    total_general = stats_data["total_general"]
+    df_stats = pd.DataFrame(stats_data["stats_por_legalizador_eps"], columns=["Legalizador", "EPS", "Facturas Pendientes"])
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(label="Facturas Pendientes", value=total_pendientes)
@@ -381,15 +365,15 @@ def display_statistics():
         st.metric(label="Facturas Lista para Radicar", value=total_lista_para_radicar)
         st.metric(label="Facturas con Errores", value=total_errores)
     with col3:
+        facturas_raw_for_vencidas = get_cached_facturas(search_term="", search_column="")
+        processed_facturas_df = _process_factura_for_display_df(facturas_raw_for_vencidas)
+        total_vencidas = (processed_facturas_df["Días Restantes"] == "Refacturar").sum()
         st.metric(label="Facturas Vencidas (Refacturar)", value=total_vencidas)
-
+    
     st.metric(label="Total General de Facturas", value=total_general)
     st.markdown("---")
     st.subheader("Conteo por Legalizador y EPS (Facturas Pendientes)")
-    stats = db_ops.obtener_conteo_facturas_por_legalizador_y_eps()
-
-    if stats:
-        df_stats = pd.DataFrame(stats, columns=["Legalizador", "EPS", "Facturas Pendientes"])
+    if not df_stats.empty:
         st.dataframe(df_stats, use_container_width=True, hide_index=True)
     else:
         st.info("No hay estadísticas disponibles de facturas pendientes.")
@@ -409,13 +393,6 @@ def highlight_rows(row):
             styles = ['background-color: lightgreen'] * len(row)
     return styles
 
-@st.cache_data(ttl=60)
-def get_cached_facturas(search_term, search_column):
-    return db_ops.cargar_facturas(search_term, search_column)
-
-def invalidate_facturas_cache():
-    get_cached_facturas.clear()
-
 def display_invoice_table(user_role):
     col_search, col_criteria = st.columns([3, 2])
     with col_search:
@@ -426,7 +403,6 @@ def display_invoice_table(user_role):
 
     current_search_term = st.session_state.get(f'search_input_widget_{st.session_state.filter_text_key}', '').strip()
     current_search_criterion = st.session_state.get(f'search_criteria_widget_{st.session_state.filter_select_key}', 'Numero de Factura')
-
     db_column_name = {
         "Numero de Factura": "numero_factura",
         "Legalizador": "facturador",
@@ -434,26 +410,13 @@ def display_invoice_table(user_role):
         "Area de Servicio": "area_servicio",
         "Estado Auditoria": "estado_auditoria"
     }.get(current_search_criterion)
-
     facturas_raw = get_cached_facturas(search_term=current_search_term, search_column=db_column_name)
-
-    processed_facturas = []
-    for factura in facturas_raw:
-        processed_facturas.append(_process_factura_for_display(factura))
-        
-    df_facturas = pd.DataFrame(processed_facturas)
-
+    df_facturas = _process_factura_for_display_df(facturas_raw)
+    
     if not df_facturas.empty:
-        def get_sort_key(row):
-            if row["Estado Auditoria"] == 'Devuelta por Auditor': return 1
-            elif row["Estado Auditoria"] == 'Corregida por Legalizador': return 2
-            elif row["Días Restantes"] == "Refacturar": return 3
-            else: return 4
-        
-        df_facturas['sort_key'] = df_facturas.apply(get_sort_key, axis=1)
+        df_facturas['sort_key'] = df_facturas.apply(lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor' else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador' else 3 if row["Días Restantes"] == "Refacturar" else 4, axis=1)
         df_facturas = df_facturas.sort_values(by=['sort_key', 'Fecha Generación'], ascending=[True, False])
         df_facturas = df_facturas.drop(columns=['sort_key'])
-        
         st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
@@ -468,8 +431,6 @@ def display_invoice_table(user_role):
     if selected_invoice_id > 0:
         factura_data_for_action = db_ops.obtener_factura_por_id(selected_invoice_id)
         if factura_data_for_action:
-            factura_data_for_action = _ensure_datetime_objects(factura_data_for_action)
-
             st.session_state.current_invoice_data = factura_data_for_action
             with col_edit:
                 if st.button("Cargar para Edición", key="edit_button"):
@@ -482,36 +443,26 @@ def display_invoice_table(user_role):
                         if st.button("Refacturar", key="refacturar_button"):
                             cargar_factura_para_refacturar_action(selected_invoice_id)
                             st.rerun()
-            
             if user_role == 'auditor':
                 st.markdown("---")
                 st.subheader("Acciones de Auditoría para Factura Seleccionada")
-                
                 estado_auditoria_default_index = 0
                 if st.session_state.current_invoice_data and st.session_state.current_invoice_data['estado_auditoria']:
-                    try:
-                        estado_auditoria_default_index = ESTADO_AUDITORIA_OPCIONES.index(st.session_state.current_invoice_data['estado_auditoria'])
-                    except ValueError:
-                        estado_auditoria_default_index = 0
-                
+                    try: estado_auditoria_default_index = ESTADO_AUDITORIA_OPCIONES.index(st.session_state.current_invoice_data['estado_auditoria'])
+                    except ValueError: estado_auditoria_default_index = 0
                 tipo_error_default_index = 0
                 if st.session_state.current_invoice_data and st.session_state.current_invoice_data['tipo_error']:
-                    try:
-                        tipo_error_default_index = TIPO_ERROR_OPCIONES.index(st.session_state.current_invoice_data['tipo_error'])
-                    except ValueError:
-                        tipo_error_default_index = 0
-
+                    try: tipo_error_default_index = TIPO_ERROR_OPCIONES.index(st.session_state.current_invoice_data['tipo_error'])
+                    except ValueError: tipo_error_default_index = 0
                 with st.form(key=f"auditoria_form_{selected_invoice_id}", clear_on_submit=False):
                     estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES if opt != 'Radicada y Aceptada']
                     estado_auditoria_input = st.selectbox("Estado Auditoría:", options=estado_auditoria_options_filtered, index=estado_auditoria_default_index, key=f"estado_auditoria_{selected_invoice_id}")
                     tipo_error_input = st.selectbox("Tipo de Error:", options=TIPO_ERROR_OPCIONES, index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
                     observacion_auditor_input = st.text_area("Observación Auditor:", value=st.session_state.current_invoice_data['observacion_auditor'] if st.session_state.current_invoice_data and st.session_state.current_invoice_data['observacion_auditor'] else "", key=f"observacion_auditor_{selected_invoice_id}")
-                    
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
                         auditar_factura_action(selected_invoice_id, estado_auditoria_input, observacion_auditor_input, tipo_error_input)
                         st.rerun()
-
                 if factura_data_for_action['estado_auditoria'] in ['Lista para Radicar', 'En Radicador']:
                     fecha_entrega_radicador_val = factura_data_for_action['fecha_entrega_radicador']
                     fecha_entrega_radicador_checked = st.checkbox(
@@ -522,10 +473,8 @@ def display_invoice_table(user_role):
                     if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
                         actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
                         st.rerun()
-
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):
                     st.session_state.confirm_delete_id = selected_invoice_id
-                
                 if 'confirm_delete_id' in st.session_state and st.session_state.confirm_delete_id == selected_invoice_id:
                     st.warning(f"¿Estás seguro de que quieres eliminar la factura ID: {selected_invoice_id}?\nEsta acción es irreversible.")
                     col_confirm_del, col_cancel_del = st.columns(2)
@@ -535,10 +484,9 @@ def display_invoice_table(user_role):
                             if success:
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None
-                                invalidate_facturas_cache()
+                                invalidate_all_caches()
                                 cancelar_edicion_action()
-                            else:
-                                st.error("No se pudo eliminar la factura.")
+                            else: st.error("No se pudo eliminar la factura.")
                             st.rerun()
                     with col_cancel_del:
                         if st.button("Cancelar", key="cancel_delete_button_modal"):
@@ -557,7 +505,6 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     if not all([facturador, eps, numero_factura, fecha_generacion_str, area_servicio]):
         st.error("Todos los campos son obligatorios.")
         return
-
     if not numero_factura.isdigit():
         st.error("El campo 'Número de Factura' debe contener solo números.")
         return
@@ -566,72 +513,48 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         return
     if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"):
         return
-
     fecha_generacion_db = fecha_generacion_obj
     fecha_hora_entrega = datetime.now()
-
     factura_id = db_ops.guardar_factura(
-        numero_factura=numero_factura, 
-        area_servicio=area_servicio, 
-        facturador=facturador, 
-        fecha_generacion=fecha_generacion_db, 
-        eps=eps, 
+        numero_factura=numero_factura,
+        area_servicio=area_servicio,
+        facturador=facturador,
+        fecha_generacion=fecha_generacion_db,
+        eps=eps,
         fecha_hora_entrega=fecha_hora_entrega
     )
-
     if factura_id:
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
         st.success("Factura guardada correctamente.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error(f"La factura con número '{numero_factura}' ya existe con la misma combinación de Legalizador, EPS y Área de Servicio.")
 
 def actualizar_factura_action(factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps,
-                               fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
-                               fecha_devolucion_lider, revisado, factura_original_id, estado,
-                               reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
-
+                             fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                             fecha_devolucion_lider, revisado, factura_original_id, estado,
+                             reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
     if not all([factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps]):
         st.error("Todos los campos son obligatorios para la actualización.")
         return
-
     if not numero_factura.isdigit():
         st.error("El campo 'Número de Factura' debe contener solo números.")
         return
-
     fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generación")
-    if fecha_generacion_obj is None:
-        return
-    if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"):
-        return
-
+    if fecha_generacion_obj is None: return
+    if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"): return
     fecha_generacion_db = fecha_generacion_obj
-
     success = db_ops.actualizar_factura(
-        factura_id,
-        numero_factura,
-        area_servicio,
-        facturador,
-        fecha_generacion_db,
-        eps,
-        fecha_hora_entrega,
-        tiene_correccion,
-        descripcion_devolucion,
-        fecha_devolucion_lider,
-        revisado,
-        factura_original_id,
-        estado,
-        reemplazada_por_numero_factura,
-        estado_auditoria,
-        observacion_auditor,
-        tipo_error,
-        fecha_reemplazo
+        factura_id, numero_factura, area_servicio, facturador, fecha_generacion_db, eps,
+        fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+        fecha_devolucion_lider, revisado, factura_original_id, estado,
+        reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo
     )
     if success:
         st.success("Factura actualizada correctamente.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error(f"No se pudo actualizar la factura. El número de factura '{numero_factura}' ya podría existir con la misma combinación de Legalizador, EPS y Área de Servicio.")
@@ -639,7 +562,6 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
 def cargar_factura_para_edicion_action(factura_id):
     factura_data = db_ops.obtener_factura_por_id(factura_id)
     if factura_data:
-        factura_data = _ensure_datetime_objects(factura_data)
         st.session_state.editing_factura_id = factura_id
         st.session_state.edit_mode = True
         st.session_state.refacturar_mode = False
@@ -652,7 +574,6 @@ def cargar_factura_para_edicion_action(factura_id):
 def cargar_factura_para_refacturar_action(factura_id):
     factura_data = db_ops.obtener_factura_por_id(factura_id)
     if factura_data:
-        factura_data = _ensure_datetime_objects(factura_data)
         st.session_state.editing_factura_id = factura_id
         st.session_state.edit_mode = False
         st.session_state.refacturar_mode = True
@@ -666,18 +587,15 @@ def auditar_factura_action(factura_id, nuevo_estado_auditoria, observacion, tipo
     if st.session_state.user_role != 'auditor':
         st.error("Permiso Denegado. Solo los auditores pueden auditar facturas.")
         return
-
     if nuevo_estado_auditoria == "Devuelta por Auditor" and not tipo_error:
         st.error("Si el estado es 'Devuelta por Auditor', debe especificar el 'Tipo de Error'.")
         return
-
     observacion_to_save = observacion if observacion else None
     tipo_error_to_save = tipo_error if tipo_error else None
-
     success = db_ops.actualizar_estado_auditoria_factura(factura_id, nuevo_estado_auditoria, observacion_to_save, tipo_error_to_save)
     if success:
         st.success(f"Estado de auditoría de factura actualizado a '{nuevo_estado_auditoria}'.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error("No se pudo actualizar el estado de auditoría de la factura.")
@@ -686,7 +604,6 @@ def eliminar_factura_action(factura_id):
     if st.session_state.user_role != 'auditor':
         st.error("Permiso Denegado. Solo los auditores pueden eliminar facturas.")
         return False
-    
     success = db_ops.eliminar_factura(factura_id)
     return success
 
@@ -697,24 +614,16 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if not new_numero_factura.isdigit():
         st.error("El 'Nuevo Número de Factura' debe contener solo números.")
         return
-
     fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha de Generación de la Nueva Factura")
-    if fecha_reemplazo_factura_obj is None:
-        return
-    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"):
-        return
-    
+    if fecha_reemplazo_factura_obj is None: return
+    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
     new_fecha_generacion_db = fecha_reemplazo_factura_obj
-
     factura_original_data = db_ops.obtener_factura_por_id(old_factura_id)
     if not factura_original_data:
         st.error("No se pudo obtener la información de la factura original para el reemplazo.")
         return
-
     success = db_ops.guardar_factura_reemplazo(
-        old_factura_id,
-        new_numero_factura,
-        new_fecha_generacion_db,
+        old_factura_id, new_numero_factura, new_fecha_generacion_db,
         factura_original_data['area_servicio'],
         factura_original_data['facturador'],
         factura_original_data['eps'],
@@ -722,7 +631,7 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     )
     if success:
         st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error(f"No se pudo guardar la factura de reemplazo. El número '{new_numero_factura}' ya podría existir.")
@@ -731,11 +640,10 @@ def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actu
     if st.session_state.user_role != 'legalizador':
         st.error("Permiso Denegado. Solo los legalizadores pueden marcar facturas como corregidas.")
         return
-    
     success = db_ops.actualizar_estado_auditoria_factura(factura_id, "Corregida por Legalizador", observacion_actual, tipo_error_actual)
     if success:
         st.success(f"Factura ID: {factura_id} marcada como 'Corregida por Legalizador'.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error("No se pudo marcar la factura como corregida.")
@@ -745,7 +653,7 @@ def actualizar_fecha_entrega_radicador_action(factura_id, set_date):
     success = db_ops.actualizar_fecha_entrega_radicador(factura_id, fecha_entrega)
     if success:
         st.success("Fecha de entrega al radicador actualizada correctamente.")
-        invalidate_facturas_cache()
+        invalidate_all_caches()
         cancelar_edicion_action()
     else:
         st.error("No se pudo actualizar la fecha de entrega al radicador.")
@@ -762,9 +670,7 @@ def cancelar_edicion_action():
     st.session_state.filter_text_key += 1
     st.session_state.filter_select_key += 1
 
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-
+# --- Flujo Principal de la Aplicación ---
 if st.session_state['logged_in']:
     main_app_page()
 else:
