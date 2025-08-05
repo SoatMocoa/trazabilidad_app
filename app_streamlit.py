@@ -99,21 +99,20 @@ def _process_factura_for_display_df(df_raw):
     df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
     
     # Lógica vectorizada para los días restantes
-    df['Días Restantes_temp'] = df.apply(
+    df['Días Restantes'] = df.apply(
         lambda row: calcular_dias_habiles_entre_fechas(row['fecha_limite_liquidacion_obj'], hoy) * -1
                     if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
                     else calcular_dias_habiles_entre_fechas(hoy, row['fecha_limite_liquidacion_obj'])
                     if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
         axis=1
     )
-
-    # Asignar valores de texto de forma vectorizada
-    df['Días Restantes'] = df['Días Restantes_temp']
     
-    df.loc[(df['Días Restantes_temp'] < 0) & 
+    df['Días Restantes'] = df['Días Restantes'].astype('object')
+    
+    df.loc[(df['Días Restantes'] < 0) & 
            (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
            'Días Restantes'] = "Refacturar"
-    df.loc[(df['Días Restantes_temp'] == 0) & 
+    df.loc[(df['Días Restantes'] == 0) & 
            (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
            'Días Restantes'] = "Hoy Vence"
     
@@ -144,9 +143,6 @@ def _process_factura_for_display_df(df_raw):
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Estado'] = df['Estado_for_tree']
     
-    # Conversión a string para evitar el error de pyarrow
-    df['Días Restantes'] = df['Días Restantes'].astype(str)
-
     # Renombrar columnas para la tabla final
     df = df.rename(columns={
         'id': 'ID',
@@ -393,7 +389,7 @@ def highlight_rows(row):
                 styles = ['background-color: yellow'] * len(row)
             elif dias_restantes_num > 3:
                 styles = ['background-color: lightgreen'] * len(row)
-        except ValueError:
+        except (ValueError, TypeError):
             # No es un número, se ignora
             pass
     return styles
