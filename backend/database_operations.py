@@ -4,9 +4,11 @@ from psycopg2 import Error
 from psycopg2 import errors
 from datetime import datetime
 import logging
+import streamlit as st
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+@st.cache_resource(ttl=3600)
 def get_db_connection():
     db_host = os.environ.get("DB_HOST", "localhost")
     db_name = os.environ.get("DB_NAME")
@@ -19,7 +21,7 @@ def get_db_connection():
 
     try:
         conn = psycopg2.connect(host=db_host, database=db_name, user=db_user, password=db_password, port=db_port)
-        logging.info("Conexión a la DB establecida exitosamente.")
+        logging.info("Conexión a la DB establecida exitosamente (usando caché).")
         return conn
     except Error as e:
         logging.error(f"Error al conectar a la base de datos PostgreSQL: {e}")
@@ -31,6 +33,14 @@ class DatabaseConnection:
 
     def __enter__(self):
         self.conn = get_db_connection()
+        
+        # Verificación robusta del estado de la conexión.
+        if self.conn and self.conn.closed != 0:
+            logging.warning("Conexión en caché encontrada, pero está cerrada. Recreando la conexión.")
+            # Si la conexión está cerrada, borra la caché y obtiene una nueva.
+            get_db_connection.clear()
+            self.conn = get_db_connection()
+        
         return self.conn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -40,12 +50,13 @@ class DatabaseConnection:
             else:
                 self.conn.rollback()
                 logging.error(f"Transacción revertida debido a un error: {exc_val}")
-            self.conn.close()
 
 def crear_tablas():
-    conn = get_db_connection()
-    if conn:
-        try:
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None:
+                logging.error("No se pudo obtener una conexión a la base de datos.")
+                return
             with conn.cursor() as cursor:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS usuarios (
@@ -97,13 +108,17 @@ def crear_tablas():
                         FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
                     );
                 """)
-                conn.commit()
-                logging.info("Tablas verificadas/creadas y usuarios predeterminados insertados.")
-        except Error as e:
-            logging.error(f"Error al crear tablas o insertar usuarios: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+                
+                # --- Mejoras de rendimiento: Creación de índices ---
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_numero_factura ON facturas (numero_factura);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_facturador ON facturas (facturador);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_eps ON facturas (eps);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_area_servicio ON facturas (area_servicio);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_estado_auditoria ON facturas (estado_auditoria);")
+
+                logging.info("Tablas verificadas/creadas, usuarios predeterminados e índices insertados.")
+    except Error as e:
+        logging.error(f"Error al crear tablas, insertar usuarios o índices: {e}")
 
 def obtener_credenciales_usuario(username):
     try:
@@ -293,7 +308,7 @@ def eliminar_factura(factura_id):
         return False
 
 def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
-                              area_servicio, facturador, eps, fecha_reemplazo):
+                                area_servicio, facturador, eps, fecha_reemplazo):
 
     try:
         with DatabaseConnection() as conn:
