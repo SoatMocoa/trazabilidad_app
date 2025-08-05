@@ -58,12 +58,12 @@ def get_cached_facturas(search_term, search_column):
 @st.cache_data(ttl=300)
 def get_cached_statistics():
     return {
-        "total_pendientes": db_ops.obtener_conteo_facturas_pendientes_global(),
-        "total_lista_para_radicar": db_ops.obtener_conteo_facturas_lista_para_radicar(),
-        "total_en_radicador": db_ops.obtener_conteo_facturas_en_radicador(),
-        "total_errores": db_ops.obtener_conteo_facturas_con_errores(),
-        "total_general": db_ops.obtener_conteo_total_facturas(),
-        "stats_por_legalizador_eps": db_ops.obtener_conteo_facturas_por_legalizador_y_eps()
+        "total_pendientes": db_ops.obtener_conteo_facturas_pendientes_global() or 0,
+        "total_lista_para_radicar": db_ops.obtener_conteo_facturas_lista_para_radicar() or 0,
+        "total_en_radicador": db_ops.obtener_conteo_facturas_en_radicador() or 0,
+        "total_errores": db_ops.obtener_conteo_facturas_con_errores() or 0,
+        "total_general": db_ops.obtener_conteo_total_facturas() or 0,
+        "stats_por_legalizador_eps": db_ops.obtener_conteo_facturas_por_legalizador_y_eps() or []
     }
 
 def invalidate_all_caches():
@@ -85,18 +85,27 @@ def _process_factura_for_display_df(df_raw):
         df = pd.DataFrame(df_raw)
     else:
         df = df_raw.copy()
-        
+    
+    # Si el DataFrame está vacío, devolvemos una estructura con las columnas finales.
+    if df.empty:
+        return pd.DataFrame(columns=[
+            'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
+            'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
+            'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
+            'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
+        ])
+    
     hoy = date.today()
 
     # Conversión de tipos de forma vectorizada
-    df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'], errors='coerce').dt.date
-    df['fecha_reemplazo'] = pd.to_datetime(df['fecha_reemplazo'], errors='coerce').dt.date
+    df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'], errors='coerce')
+    df['fecha_reemplazo'] = pd.to_datetime(df['fecha_reemplazo'], errors='coerce')
     df['fecha_hora_entrega'] = pd.to_datetime(df['fecha_hora_entrega'], errors='coerce')
     df['fecha_entrega_radicador'] = pd.to_datetime(df['fecha_entrega_radicador'], errors='coerce')
-    df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce').dt.date
+    df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce')
 
     # Lógica vectorizada para calcular la fecha límite
-    df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
+    df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].dt.date.apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
     
     # Lógica vectorizada para los días restantes
     df['Días Restantes'] = df.apply(
@@ -106,9 +115,11 @@ def _process_factura_for_display_df(df_raw):
                     if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
         axis=1
     )
-    
+
+    # Convertir a tipo 'object' para que pueda contener números y strings.
     df['Días Restantes'] = df['Días Restantes'].astype('object')
     
+    # Asignar valores de texto de forma vectorizada
     df.loc[(df['Días Restantes'] < 0) & 
            (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
            'Días Restantes'] = "Refacturar"
@@ -121,14 +132,21 @@ def _process_factura_for_display_df(df_raw):
     df['Número Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['numero_factura'],
                                               np.where(df['estado'] == 'Reemplazada', df['reemplazada_por_numero_factura'], ""))
 
-    # Asegurar que las columnas de fecha sean de tipo datetime antes de formatear
+    # Asignación de columnas de fecha de forma segura
     df['Fecha Generación'] = np.where(df['factura_original_id'].notnull(), df['fecha_gen_original_linked'], df['fecha_generacion'])
-    df['Fecha Generación'] = pd.to_datetime(df['Fecha Generación'], errors='coerce')
     
-    df['Fecha Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['fecha_generacion'],
-                                              np.where(df['estado'] == 'Reemplazada', df['fecha_reemplazo'], ""))
-    df['Fecha Reemplazo Factura'] = pd.to_datetime(df['Fecha Reemplazo Factura'], errors='coerce')
-
+    # === CAMBIO APLICADO AQUÍ ===
+    # Convertimos la columna 'fecha_reemplazo' a formato de fecha y luego a string.
+    df['Fecha Reemplazo Factura'] = np.where(
+        df['factura_original_id'].notnull(),
+        df['fecha_generacion'].dt.strftime('%Y-%m-%d').fillna(''),
+        np.where(
+            df['estado'] == 'Reemplazada',
+            df['fecha_reemplazo'].dt.strftime('%Y-%m-%d').fillna(''),
+            ""
+        )
+    )
+    
     df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
     
     # Asignar estado "Vencidas" de forma vectorizada
@@ -138,7 +156,6 @@ def _process_factura_for_display_df(df_raw):
 
     # Conversión final de los campos de fecha a string para display
     df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
-    df['Fecha Reemplazo Factura'] = df['Fecha Reemplazo Factura'].dt.strftime('%Y-%m-%d').fillna('')
     df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Estado'] = df['Estado_for_tree']
