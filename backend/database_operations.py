@@ -34,7 +34,6 @@ class DatabaseConnection:
     def __enter__(self):
         self.conn = get_db_connection()
         
-        # Verificación robusta del estado de la conexión.
         if self.conn and self.conn.closed != 0:
             logging.warning("Conexión en caché encontrada, pero está cerrada. Recreando la conexión.")
             # Si la conexión está cerrada, borra la caché y obtiene una nueva.
@@ -109,7 +108,6 @@ def crear_tablas():
                     );
                 """)
                 
-                # --- Mejoras de rendimiento: Creación de índices ---
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_numero_factura ON facturas (numero_factura);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_facturador ON facturas (facturador);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_eps ON facturas (eps);")
@@ -309,7 +307,6 @@ def eliminar_factura(factura_id):
 
 def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
                                 area_servicio, facturador, eps, fecha_reemplazo):
-
     try:
         with DatabaseConnection() as conn:
             if conn is None: return False

@@ -12,14 +12,12 @@ from config.constants import (
 )
 import numpy as np
 
-# --- Configuración y Estado Inicial ---
 st.set_page_config(layout="wide")
 db_ops.crear_tablas()
 
 if not os.path.exists('data'):
     os.makedirs('data')
 
-# Inicialización de todos los estados de sesión
 def initialize_session_state():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -50,7 +48,6 @@ def initialize_session_state():
 
 initialize_session_state()
 
-# --- Funciones de Caching (Optimizadas) ---
 @st.cache_data(ttl=60)
 def get_cached_facturas(search_term, search_column):
     return db_ops.cargar_facturas(search_term, search_column)
@@ -70,7 +67,6 @@ def invalidate_all_caches():
     get_cached_facturas.clear()
     get_cached_statistics.clear()
 
-# --- Funciones de Lógica de la Aplicación ---
 def get_selectbox_default_index(options_list, current_value):
     if current_value:
         try:
@@ -80,13 +76,11 @@ def get_selectbox_default_index(options_list, current_value):
     return 0
 
 def _process_factura_for_display_df(df_raw):
-    # Convertir a DataFrame si no lo es
     if not isinstance(df_raw, pd.DataFrame):
         df = pd.DataFrame(df_raw)
     else:
         df = df_raw.copy()
     
-    # Si el DataFrame está vacío, devolvemos una estructura con las columnas finales.
     if df.empty:
         return pd.DataFrame(columns=[
             'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
@@ -97,17 +91,14 @@ def _process_factura_for_display_df(df_raw):
     
     hoy = date.today()
 
-    # Conversión de tipos de forma vectorizada
     df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'], errors='coerce')
     df['fecha_reemplazo'] = pd.to_datetime(df['fecha_reemplazo'], errors='coerce')
     df['fecha_hora_entrega'] = pd.to_datetime(df['fecha_hora_entrega'], errors='coerce')
     df['fecha_entrega_radicador'] = pd.to_datetime(df['fecha_entrega_radicador'], errors='coerce')
     df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce')
 
-    # Lógica vectorizada para calcular la fecha límite
     df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].dt.date.apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
     
-    # Lógica vectorizada para los días restantes
     df['Días Restantes'] = df.apply(
         lambda row: calcular_dias_habiles_entre_fechas(row['fecha_limite_liquidacion_obj'], hoy) * -1
                     if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
@@ -116,10 +107,8 @@ def _process_factura_for_display_df(df_raw):
         axis=1
     )
 
-    # Convertir a tipo 'object' para que pueda contener números y strings.
     df['Días Restantes'] = df['Días Restantes'].astype('object')
     
-    # Asignar valores de texto de forma vectorizada
     df.loc[(df['Días Restantes'] < 0) & 
            (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
            'Días Restantes'] = "Refacturar"
@@ -127,16 +116,12 @@ def _process_factura_for_display_df(df_raw):
            (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
            'Días Restantes'] = "Hoy Vence"
     
-    # Lógica de reemplazo de factura y display
     df['Número de Factura'] = np.where(df['factura_original_id'].notnull(), df['num_fact_original_linked'], df['numero_factura'])
     df['Número Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['numero_factura'],
                                               np.where(df['estado'] == 'Reemplazada', df['reemplazada_por_numero_factura'], ""))
 
-    # Asignación de columnas de fecha de forma segura
     df['Fecha Generación'] = np.where(df['factura_original_id'].notnull(), df['fecha_gen_original_linked'], df['fecha_generacion'])
     
-    # === CAMBIO APLICADO AQUÍ ===
-    # Convertimos la columna 'fecha_reemplazo' a formato de fecha y luego a string.
     df['Fecha Reemplazo Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['fecha_generacion'].dt.strftime('%Y-%m-%d').fillna(''),
@@ -149,18 +134,15 @@ def _process_factura_for_display_df(df_raw):
     
     df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
     
-    # Asignar estado "Vencidas" de forma vectorizada
     df['Estado_for_tree'] = df['Estado']
     df.loc[df['Días Restantes'] == "Refacturar", 'Estado_for_tree'] = "Vencidas"
     df.loc[df['Días Restantes'] == "Hoy Vence", 'Estado_for_tree'] = "Vencidas"
 
-    # Conversión final de los campos de fecha a string para display
     df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
     df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Estado'] = df['Estado_for_tree']
     
-    # Renombrar columnas para la tabla final
     df = df.rename(columns={
         'id': 'ID',
         'area_servicio': 'Área de Servicio',
@@ -178,7 +160,6 @@ def _process_factura_for_display_df(df_raw):
         'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
     ]]
 
-# --- Funciones para la UI ---
 def login_page():
     st.title("Iniciar Sesión - Trazabilidad de Facturas")
     with st.form("login_form"):
@@ -407,7 +388,6 @@ def highlight_rows(row):
             elif dias_restantes_num > 3:
                 styles = ['background-color: lightgreen'] * len(row)
         except (ValueError, TypeError):
-            # No es un número, se ignora
             pass
     return styles
 
@@ -688,7 +668,6 @@ def cancelar_edicion_action():
     st.session_state.filter_text_key += 1
     st.session_state.filter_select_key += 1
 
-# --- Flujo Principal de la Aplicación ---
 if st.session_state['logged_in']:
     main_app_page()
 else:
