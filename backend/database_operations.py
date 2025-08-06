@@ -305,32 +305,60 @@ def eliminar_factura(factura_id):
         logging.error(f"Error al eliminar factura ID: {factura_id}: {e}")
         return False
 
-def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
-                                area_servicio, facturador, eps, fecha_reemplazo):
+# def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion,
+                                # area_servicio, facturador, eps, fecha_reemplazo):
+    # try:
+        # with DatabaseConnection() as conn:
+            # if conn is None: return False
+            # with conn.cursor() as cursor:
+                # cursor.execute("""
+                    # INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
+                                          # fecha_hora_entrega, factura_original_id, estado)
+                    # VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+                # """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
+                      # datetime.now(), old_factura_id, 'Activa'))
+                # new_factura_id = cursor.fetchone()[0]
+
+                # cursor.execute("""
+                    # UPDATE facturas SET
+                        # estado = 'Reemplazada', reemplazada_por_numero_factura = %s, fecha_reemplazo = %s
+                    # WHERE id = %s;
+                # """, (new_numero_factura, fecha_reemplazo, old_factura_id))
+                # logging.info(f"Factura ID: {old_factura_id} reemplazada por nueva factura ID: {new_factura_id} ({new_numero_factura}).")
+                # return True
+    # except errors.UniqueViolation as e:
+        # logging.warning(f"Intento de guardar factura de reemplazo con combinación duplicada: (Número: '{new_numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
+        # return False
+    # except Error as e:
+        # logging.error(f"Error al guardar factura de reemplazo para ID original {old_factura_id}: {e}")
+        # return False
+
+def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion, fecha_reemplazo):
     try:
         with DatabaseConnection() as conn:
-            if conn is None: return False
+            if conn is None:
+                return False
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps,
-                                          fecha_hora_entrega, factura_original_id, estado)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
-                """, (new_numero_factura, area_servicio, facturador, new_fecha_generacion, eps,
-                      datetime.now(), old_factura_id, 'Activa'))
-                new_factura_id = cursor.fetchone()[0]
-
-                cursor.execute("""
                     UPDATE facturas SET
-                        estado = 'Reemplazada', reemplazada_por_numero_factura = %s, fecha_reemplazo = %s
+                        numero_factura = %s,
+                        fecha_generacion = %s,
+                        estado = 'Reemplazada',
+                        reemplazada_por_numero_factura = NULL,
+                        fecha_reemplazo = %s,
+                        estado_auditoria = 'Pendiente'
                     WHERE id = %s;
-                """, (new_numero_factura, fecha_reemplazo, old_factura_id))
-                logging.info(f"Factura ID: {old_factura_id} reemplazada por nueva factura ID: {new_factura_id} ({new_numero_factura}).")
+                """, (new_numero_factura, new_fecha_generacion, fecha_reemplazo, old_factura_id))
+                
+                logging.info(f"Factura ID: {old_factura_id} actualizada como reemplazada con el nuevo número: {new_numero_factura}.")
                 return True
     except errors.UniqueViolation as e:
-        logging.warning(f"Intento de guardar factura de reemplazo con combinación duplicada: (Número: '{new_numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área: '{area_servicio}')")
+        # Esta parte puede necesitar el facturador, eps, etc. para el mensaje de error.
+        # Si tienes problemas, puedes simplemente loggear el error genérico.
+        logging.warning(f"Intento de actualizar factura con combinación duplicada: (Número: '{new_numero_factura}')")
         return False
     except Error as e:
-        logging.error(f"Error al guardar factura de reemplazo para ID original {old_factura_id}: {e}")
+        logging.error(f"Error al actualizar factura de reemplazo para ID original {old_factura_id}: {e}")
         return False
 
 def cargar_facturas(search_term=None, search_column=None):
