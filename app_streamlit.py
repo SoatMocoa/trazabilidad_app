@@ -618,35 +618,6 @@ def eliminar_factura_action(factura_id):
     success = db_ops.eliminar_factura(factura_id)
     return success
 
-# def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_reemplazo_factura_str, facturador, eps, area_servicio):
-    # if not new_numero_factura:
-        # st.error("El campo 'Nuevo Número de Factura' es obligatorio.")
-        # return
-    # if not new_numero_factura.isdigit():
-        # st.error("El 'Nuevo Número de Factura' debe contener solo números.")
-        # return
-    # fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha de Generación de la Nueva Factura")
-    # if fecha_reemplazo_factura_obj is None: return
-    # if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
-    # new_fecha_generacion_db = fecha_reemplazo_factura_obj
-    # factura_original_data = db_ops.obtener_factura_por_id(old_factura_id)
-    # if not factura_original_data:
-        # st.error("No se pudo obtener la información de la factura original para el reemplazo.")
-        # return
-    # success = db_ops.guardar_factura_reemplazo(
-        # old_factura_id, new_numero_factura, new_fecha_generacion_db,
-        # factura_original_data['area_servicio'],
-        # factura_original_data['facturador'],
-        # factura_original_data['eps'],
-        # datetime.now().date()
-    # )
-    # if success:
-        # st.success(f"Factura reemplazada por {new_numero_factura} correctamente.")
-        # invalidate_all_caches()
-        # cancelar_edicion_action()
-    # else:
-        # st.error(f"No se pudo guardar la factura de reemplazo. El número '{new_numero_factura}' ya podría existir.")
-
 def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_reemplazo_factura_str, facturador, eps, area_servicio):
     if not new_numero_factura:
         st.error("El campo 'Nuevo Número de Factura' es obligatorio.")
@@ -658,7 +629,6 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if fecha_reemplazo_factura_obj is None: return
     if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
     
-    # Aquí es donde se hace la llamada a la función de la base de datos
     success = db_ops.guardar_factura_reemplazo(
         old_factura_id,
         new_numero_factura,
