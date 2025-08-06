@@ -97,29 +97,42 @@ def _process_factura_for_display_df(df_raw):
     df['fecha_entrega_radicador'] = pd.to_datetime(df['fecha_entrega_radicador'], errors='coerce')
     df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce')
 
-    df['fecha_limite_liquidacion_obj'] = df['fecha_generacion'].dt.date.apply(lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None)
+    # Corrección: Elige la fecha base para el cálculo del plazo
+    df['fecha_base_calculo'] = np.where(
+        df['fecha_reemplazo'].notna(), 
+        df['fecha_reemplazo'].dt.date, 
+        df['fecha_generacion'].dt.date
+    )
+    
+    df['fecha_limite_liquidacion_obj'] = df['fecha_base_calculo'].apply(
+        lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None
+    )
     
     df['Días Restantes'] = df.apply(
         lambda row: calcular_dias_habiles_entre_fechas(row['fecha_limite_liquidacion_obj'], hoy) * -1
-                    if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
-                    else calcular_dias_habiles_entre_fechas(hoy, row['fecha_limite_liquidacion_obj'])
-                    if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
+                        if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
+                        else calcular_dias_habiles_entre_fechas(hoy, row['fecha_limite_liquidacion_obj'])
+                        if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
         axis=1
     )
 
     df['Días Restantes'] = df['Días Restantes'].astype('object')
     
-    df.loc[(df['Días Restantes'] < 0) & 
-           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
+    # Asigna "Refacturar" solo si el estado no es "Reemplazada"
+    df.loc[(df['Días Restantes'] < 0) &
+           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
+           (df['estado'] != 'Reemplazada'), 
            'Días Restantes'] = "Refacturar"
-    df.loc[(df['Días Restantes'] == 0) & 
-           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])),
+    
+    df.loc[(df['Días Restantes'] == 0) &
+           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
+           (df['estado'] != 'Reemplazada'),
            'Días Restantes'] = "Hoy Vence"
     
+    # Aquí la lógica para los campos de reemplazo y estado es correcta, no la modificaremos
     df['Número de Factura'] = np.where(df['factura_original_id'].notnull(), df['num_fact_original_linked'], df['numero_factura'])
     df['Número Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['numero_factura'],
                                               np.where(df['estado'] == 'Reemplazada', df['reemplazada_por_numero_factura'], ""))
-
     df['Fecha Generación'] = np.where(df['factura_original_id'].notnull(), df['fecha_gen_original_linked'], df['fecha_generacion'])
     
     df['Fecha Reemplazo Factura'] = np.where(
