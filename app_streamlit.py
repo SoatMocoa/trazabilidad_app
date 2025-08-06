@@ -645,13 +645,11 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if fecha_reemplazo_factura_obj is None: return
     if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
     
-    new_fecha_generacion_db = fecha_reemplazo_factura_obj
-    
+    # Aquí es donde se hace la llamada a la función de la base de datos
     success = db_ops.guardar_factura_reemplazo(
         old_factura_id,
         new_numero_factura,
-        new_fecha_generacion_db,
-        datetime.now().date()
+        fecha_reemplazo_factura_obj
     )
     
     if success:

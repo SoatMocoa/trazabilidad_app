@@ -333,7 +333,8 @@ def eliminar_factura(factura_id):
         # logging.error(f"Error al guardar factura de reemplazo para ID original {old_factura_id}: {e}")
         # return False
 
-def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_generacion, fecha_reemplazo):
+# database_operations.py
+def guardar_factura_reemplazo(old_factura_id, new_numero_factura, fecha_reemplazo):
     try:
         with DatabaseConnection() as conn:
             if conn is None:
@@ -351,6 +352,8 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, new_fecha_gene
                 logging.info(f"Factura ID: {old_factura_id} actualizada como reemplazada con el nuevo número: {new_numero_factura}.")
                 return True
     except errors.UniqueViolation as e:
+        # Esta parte puede necesitar el facturador, eps, etc. para el mensaje de error.
+        # Si tienes problemas, puedes simplemente loggear el error genérico.
         logging.warning(f"Intento de actualizar factura con combinación duplicada: (Número: '{new_numero_factura}')")
         return False
     except Error as e:
