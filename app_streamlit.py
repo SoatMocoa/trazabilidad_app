@@ -1,4 +1,5 @@
 import streamlit as st
+st.write(st.__version__)
 from datetime import datetime, timedelta, date
 from backend import database_operations as db_ops
 import pandas as pd
@@ -450,7 +451,7 @@ def display_invoice_table(user_role):
             else:
                 st.warning("No se pudieron marcar facturas como entregadas.")
             # Forzar recarga y actualización de la tabla
-            st.experimental_rerun()
+            st.rerun()
     # --- FIN NUEVO ---
 
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
