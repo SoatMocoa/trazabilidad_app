@@ -432,6 +432,21 @@ def display_invoice_table(user_role):
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
+    # --- NUEVO: Selección múltiple para entrega masiva ---
+    if not df_facturas.empty and user_role == 'auditor':
+        st.markdown("### Entrega Masiva al Radicador")
+        selectable_ids = df_facturas.loc[
+            df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador']),
+            'ID'
+        ].tolist()
+        selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
+        if selected_ids and st.button("Marcar seleccionadas como entregadas"):
+            for fid in selected_ids:
+                actualizar_fecha_entrega_radicador_action(fid, True)
+            st.success(f"{len(selected_ids)} facturas marcadas como entregadas.")
+            st.rerun()
+    # --- FIN NUEVO ---
+
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
     with col_export:
         if st.button("Exportar a CSV"):

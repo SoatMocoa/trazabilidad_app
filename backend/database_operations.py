@@ -293,6 +293,34 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
         logging.error(f"Error al actualizar fecha de entrega al radicador para factura ID: {factura_id}: {e}")
         return False
 
+def entregar_facturas_radicador(factura_ids, fecha_entrega):
+    try:
+        if not factura_ids:
+            logging.info("No se proporcionaron IDs para entrega masiva al radicador.")
+            return 0
+
+        with DatabaseConnection() as conn:
+            if conn is None:
+                logging.error("No se pudo obtener conexión para entrega masiva al radicador.")
+                return 0
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE facturas SET
+                        fecha_entrega_radicador = %s,
+                        estado_auditoria = CASE
+                            WHEN estado_auditoria = 'Lista para Radicar' AND %s IS NOT NULL THEN 'En Radicador'
+                            WHEN estado_auditoria = 'En Radicador' AND %s IS NULL THEN 'Lista para Radicar'
+                            ELSE estado_auditoria
+                        END
+                    WHERE id = ANY(%s);
+                """, (fecha_entrega, fecha_entrega, fecha_entrega, factura_ids))
+                updated_count = cursor.rowcount
+                logging.info(f"Entrega masiva al radicador: {updated_count} facturas actualizadas.")
+                return updated_count
+    except Error as e:
+        logging.error(f"Error en entrega masiva al radicador: {e}")
+        return 0
+
 def eliminar_factura(factura_id):
     try:
         with DatabaseConnection() as conn:
