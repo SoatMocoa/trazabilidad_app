@@ -441,10 +441,16 @@ def display_invoice_table(user_role):
         ].tolist()
         selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
         if selected_ids and st.button("Marcar seleccionadas como entregadas"):
-            for fid in selected_ids:
-                actualizar_fecha_entrega_radicador_action(fid, True)
-            st.success(f"{len(selected_ids)} facturas marcadas como entregadas.")
-            st.rerun()
+            from datetime import datetime
+            fecha_entrega = datetime.now()
+            # Actualiza en BD masivamente con tu función eficiente
+            entregadas_count = entregar_facturas_radicador(selected_ids, fecha_entrega)
+            if entregadas_count > 0:
+                st.success(f"{entregadas_count} facturas marcadas como entregadas.")
+            else:
+                st.warning("No se pudieron marcar facturas como entregadas.")
+            # Forzar recarga y actualización de la tabla
+            st.experimental_rerun()
     # --- FIN NUEVO ---
 
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
