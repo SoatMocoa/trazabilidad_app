@@ -444,7 +444,7 @@ def display_invoice_table(user_role):
             from datetime import datetime
             fecha_entrega = datetime.now()
             # Actualiza en BD masivamente con tu función eficiente
-            entregadas_count = entregar_facturas_radicador(selected_ids, fecha_entrega)
+            entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
             if entregadas_count > 0:
                 st.success(f"{entregadas_count} facturas marcadas como entregadas.")
             else:
