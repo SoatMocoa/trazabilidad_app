@@ -1,5 +1,4 @@
 import streamlit as st
-st.write(st.__version__)
 from datetime import datetime, timedelta, date
 from backend import database_operations as db_ops
 import pandas as pd
@@ -436,8 +435,10 @@ def display_invoice_table(user_role):
     # --- NUEVO: Selección múltiple para entrega masiva ---
     if not df_facturas.empty and user_role == 'auditor':
         st.markdown("### Entrega Masiva al Radicador")
+        # Filtra para solo mostrar facturas 'Lista para Radicar' o 'En Radicador' Y que no tengan fecha de entrega
         selectable_ids = df_facturas.loc[
-            df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador']),
+            (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
+            (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
             'ID'
         ].tolist()
         selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
