@@ -326,6 +326,13 @@ def display_bulk_load_section():
                     st.warning(f"Fila {index+2}: Número de factura '{numero_factura_csv}' no es numérico. Saltando.")
                     skipped_count += 1
                     continue
+                
+                factura_existente = db_ops.obtener_factura_por_numero(numero_factura_csv)
+                if factura_existente:
+                    st.info(f"Fila {index+2}: Factura '{numero_factura_csv}' ya existe. Saltando para evitar duplicados.")
+                    skipped_count += 1
+                    continue
+
                 fecha_generacion_csv_obj = parse_date(fecha_str_csv, f"Fecha de Generación (Fila {index+2})")
                 if fecha_generacion_csv_obj is None or not validate_future_date(fecha_generacion_csv_obj, f"Fecha de Generación (Fila {index+2})"):
                     skipped_count += 1
@@ -346,7 +353,8 @@ def display_bulk_load_section():
                     inserted_count += 1
                 else:
                     skipped_count += 1
-                    st.info(f"Fila {index+2}: Factura '{numero_factura_csv}' ya existe o hubo un error al insertar. Saltando.")
+                    st.warning(f"Fila {index+2}: Error al insertar la factura '{numero_factura_csv}'. Saltando.")
+
             st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
             invalidate_all_caches()
             st.session_state.bulk_facturador_key += 1
@@ -386,23 +394,37 @@ def display_statistics():
         st.info("No hay estadísticas disponibles de facturas pendientes.")
 
 def highlight_rows(row):
-    styles = [''] * len(row)
+    columns_to_colorize = [
+        'Días Restantes',
+        'Estado',
+        'Estado Auditoria',
+        'Tipo de Error',
+        'Observación Auditor'
+    ]
+    styles_list = [''] * len(row)
+    
+    base_color = ''
     if row["Estado Auditoria"] == 'Devuelta por Auditor':
-        styles = ['background-color: lightblue'] * len(row)
+        base_color = 'background-color: lightblue'
     elif row["Estado Auditoria"] == 'Corregida por Legalizador':
-        styles = ['background-color: lightsalmon'] * len(row)
+        base_color = 'background-color: lightsalmon'
     elif row["Días Restantes"] == "Refacturar":
-        styles = ['background-color: salmon'] * len(row)
+        base_color = 'background-color: salmon'
     else:
         try:
             dias_restantes_num = int(row["Días Restantes"])
             if 1 <= dias_restantes_num <= 3:
-                styles = ['background-color: yellow'] * len(row)
+                base_color = 'background-color: yellow'
             elif dias_restantes_num > 3:
-                styles = ['background-color: lightgreen'] * len(row)
+                base_color = 'background-color: lightgreen'
         except (ValueError, TypeError):
             pass
-    return styles
+
+    for i, col_name in enumerate(row.index):
+        if col_name in columns_to_colorize:
+            styles_list[i] = base_color
+            
+    return styles_list
 
 def display_invoice_table(user_role):
     col_search, col_criteria = st.columns([3, 2])
@@ -441,19 +463,23 @@ def display_invoice_table(user_role):
             (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
             'ID'
         ].tolist()
-        selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
-        if selected_ids and st.button("Marcar seleccionadas como entregadas"):
-            from datetime import datetime
-            fecha_entrega = datetime.now()
-            # Actualiza en BD masivamente con tu función eficiente
-            entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
-            if entregadas_count > 0:
-                st.success(f"{entregadas_count} facturas marcadas como entregadas.")
-            else:
-                st.warning("No se pudieron marcar facturas como entregadas.")
-            # Forzar recarga y actualización de la tabla
-            st.rerun()
-    # --- FIN NUEVO ---
+
+        with st.form("entrega_masiva_form"):
+            selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
+            submitted = st.form_submit_button("Marcar seleccionadas como entregadas")
+    
+            if submitted and selected_ids:
+                from datetime import datetime
+                fecha_entrega = datetime.now()
+                entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
+                
+                if entregadas_count > 0:
+                    st.success(f"{entregadas_count} facturas marcadas como entregadas.")
+                else:
+                    st.warning("No se pudieron marcar facturas como entregadas.")
+                
+                invalidate_all_caches()
+                st.rerun()
 
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
     with col_export:
@@ -542,6 +568,12 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     if not numero_factura.isdigit():
         st.error("El campo 'Número de Factura' debe contener solo números.")
         return
+    
+    factura_existente = db_ops.obtener_factura_por_numero(numero_factura)
+    if factura_existente:
+        st.error(f"Error: La factura con el número '{numero_factura}' ya existe en la base de datos.")
+        return
+
     fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generación")
     if fecha_generacion_obj is None:
         return
@@ -564,7 +596,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         invalidate_all_caches()
         cancelar_edicion_action()
     else:
-        st.error(f"La factura con número '{numero_factura}' ya existe con la misma combinación de Legalizador, EPS y Área de Servicio.")
+        st.error(f"Error al guardar la factura. Esto puede ocurrir si el número de factura ya existe. Por favor, verifique y vuelva a intentarlo.")
 
 def actualizar_factura_action(factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps,
                              fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
@@ -648,6 +680,12 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if not new_numero_factura.isdigit():
         st.error("El 'Nuevo Número de Factura' debe contener solo números.")
         return
+    
+    factura_existente = db_ops.obtener_factura_por_numero(new_numero_factura)
+    if factura_existente:
+        st.error(f"Error: El nuevo número de factura '{new_numero_factura}' ya existe en la base de datos. Por favor, ingrese un número diferente.")
+        return
+
     fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha de Generación de la Nueva Factura")
     if fecha_reemplazo_factura_obj is None: return
     if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
@@ -663,7 +701,7 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
         invalidate_all_caches()
         cancelar_edicion_action()
     else:
-        st.error(f"No se pudo guardar la factura de reemplazo. El número '{new_numero_factura}' ya podría existir.")
+        st.error(f"No se pudo guardar la factura de reemplazo.")
 
 def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actual):
     if st.session_state.user_role != 'legalizador':

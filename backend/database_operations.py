@@ -196,6 +196,34 @@ def obtener_factura_por_id(factura_id):
         logging.error(f"Error al obtener factura por ID {factura_id}: {e}")
         return None
 
+def obtener_factura_por_numero(numero_factura):
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT
+                        id, numero_factura, area_servicio, facturador, fecha_generacion, eps,
+                        fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
+                        fecha_devolucion_lider, revisado, factura_original_id, estado,
+                        reemplazada_por_numero_factura, estado_auditoria, observacion_auditor,
+                        tipo_error, fecha_reemplazo, fecha_entrega_radicador
+                    FROM facturas
+                    WHERE numero_factura = %s;
+                """, (numero_factura,))
+                
+                column_names = [desc[0] for desc in cursor.description]
+                factura_data_tuple = cursor.fetchone()
+                
+                if factura_data_tuple:
+                    factura_data = dict(zip(column_names, factura_data_tuple))
+                    logging.info(f"Factura con número: {numero_factura} obtenida.")
+                    return factura_data
+                return None
+    except Error as e:
+        logging.error(f"Error al obtener factura por número {numero_factura}: {e}")
+        return None
+
 def obtener_detalles_soat_por_factura_id(factura_id):
     try:
         with DatabaseConnection() as conn:
