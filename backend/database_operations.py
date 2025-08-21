@@ -131,17 +131,17 @@ def obtener_credenciales_usuario(username):
         logging.error(f"Error al obtener credenciales del usuario '{username}': {e}")
         return None
 
-def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega):
+def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria="Pendiente"):  # <-- Nuevo parámetro con valor por defecto
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega)
-                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
-                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega))
+                    INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
+                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria))  # <-- Añade el nuevo valor aquí
                 factura_id = cursor.fetchone()[0]
-                logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}")
+                logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}. Estado Auditoría: {estado_auditoria}")
                 return factura_id
     except errors.UniqueViolation as e:
         logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")

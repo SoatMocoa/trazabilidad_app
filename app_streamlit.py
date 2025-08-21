@@ -66,6 +66,11 @@ def get_cached_statistics():
 def invalidate_all_caches():
     get_cached_facturas.clear()
     get_cached_statistics.clear()
+    keys_to_remove = [key for key in st.session_state.keys() if key.startswith('df_cache_')]
+    for key in keys_to_remove:
+        del st.session_state[key]
+    if 'last_search_tuple' in st.session_state:
+        del st.session_state['last_search_tuple']
 
 def get_selectbox_default_index(options_list, current_value):
     if current_value:
@@ -76,86 +81,92 @@ def get_selectbox_default_index(options_list, current_value):
     return 0
 
 def _process_factura_for_display_df(df_raw):
-    if not isinstance(df_raw, pd.DataFrame):
-        df = pd.DataFrame(df_raw)
-    else:
-        df = df_raw.copy()
-    
-    if df.empty:
+    if df_raw is None or len(df_raw) == 0:
         return pd.DataFrame(columns=[
             'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
             'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
             'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
             'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
         ])
-    
-    hoy = date.today()
 
-    df['fecha_generacion'] = pd.to_datetime(df['fecha_generacion'], errors='coerce')
-    df['fecha_reemplazo'] = pd.to_datetime(df['fecha_reemplazo'], errors='coerce')
-    df['fecha_hora_entrega'] = pd.to_datetime(df['fecha_hora_entrega'], errors='coerce')
-    df['fecha_entrega_radicador'] = pd.to_datetime(df['fecha_entrega_radicador'], errors='coerce')
-    df['fecha_gen_original_linked'] = pd.to_datetime(df['fecha_gen_original_linked'], errors='coerce')
+    if not isinstance(df_raw, pd.DataFrame):
+        df = pd.DataFrame(df_raw)
+    else:
+        df = df_raw.copy()
 
-    # Corrección: Elige la fecha base para el cálculo del plazo
-    df['fecha_base_calculo'] = np.where(
-        df['fecha_reemplazo'].notna(), 
-        df['fecha_reemplazo'].dt.date, 
-        df['fecha_generacion'].dt.date
-    )
-    
+    hoy = pd.Timestamp('today').normalize()
+
+    date_columns = ['fecha_generacion', 'fecha_reemplazo', 'fecha_hora_entrega', 'fecha_entrega_radicador', 'fecha_gen_original_linked']
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce').dt.normalize() # Usamos normalize() para quedarnos solo con la fecha
+
+    df['fecha_base_calculo'] = df['fecha_reemplazo'].combine_first(df['fecha_generacion'])
+
     df['fecha_limite_liquidacion_obj'] = df['fecha_base_calculo'].apply(
-        lambda x: sumar_dias_habiles(x, 21) if x and not pd.isnull(x) else None
-    )
-    
-    df['Días Restantes'] = df.apply(
-        lambda row: calcular_dias_habiles_entre_fechas(row['fecha_limite_liquidacion_obj'], hoy) * -1
-                        if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) and row['fecha_limite_liquidacion_obj'] < hoy
-                        else calcular_dias_habiles_entre_fechas(hoy, row['fecha_limite_liquidacion_obj'])
-                        if row['fecha_limite_liquidacion_obj'] and not pd.isnull(row['fecha_limite_liquidacion_obj']) else None,
-        axis=1
+        lambda x: sumar_dias_habiles(x, 21) if not pd.isnull(x) else None
     )
 
-    df['Días Restantes'] = df['Días Restantes'].astype('object')
-    
-    # Asigna "Refacturar" solo si el estado no es "Reemplazada"
-    df.loc[(df['Días Restantes'] < 0) &
-           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
-           (df['estado'] != 'Reemplazada'), 
-           'Días Restantes'] = "Refacturar"
-    
-    df.loc[(df['Días Restantes'] == 0) &
-           (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
-           (df['estado'] != 'Reemplazada'),
-           'Días Restantes'] = "Hoy Vence"
-    
-    # Aquí la lógica para los campos de reemplazo y estado es correcta, no la modificaremos
-    df['Número de Factura'] = np.where(df['factura_original_id'].notnull(), df['num_fact_original_linked'], df['numero_factura'])
-    df['Número Reemplazo Factura'] = np.where(df['factura_original_id'].notnull(), df['numero_factura'],
-                                              np.where(df['estado'] == 'Reemplazada', df['reemplazada_por_numero_factura'], ""))
-    df['Fecha Generación'] = np.where(df['factura_original_id'].notnull(), df['fecha_gen_original_linked'], df['fecha_generacion'])
-    
-    df['Fecha Reemplazo Factura'] = np.where(
+    def calcular_dias_para_fila(fecha_limite):
+        if pd.isnull(fecha_limite):
+            return None
+        dias = calcular_dias_habiles_entre_fechas(hoy, fecha_limite)
+        if fecha_limite < hoy:
+            return dias * -1
+        return dias
+
+    df['Días Restantes'] = df['fecha_limite_liquidacion_obj'].apply(calcular_dias_para_fila)
+
+    cond_vencidas = (
+        (df['Días Restantes'] < 0) &
+        (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
+        (df['estado'] != 'Reemplazada')
+    )
+    cond_hoy_vence = (
+        (df['Días Restantes'] == 0) &
+        (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
+        (df['estado'] != 'Reemplazada')
+    )
+    df.loc[cond_vencidas, 'Días Restantes'] = "Refacturar"
+    df.loc[cond_hoy_vence, 'Días Restantes'] = "Hoy Vence"
+
+    df['Número de Factura'] = np.where(
         df['factura_original_id'].notnull(),
-        df['fecha_generacion'].dt.strftime('%Y-%m-%d').fillna(''),
+        df['num_fact_original_linked'],
+        df['numero_factura']
+    )
+    df['Número Reemplazo Factura'] = np.where(
+        df['factura_original_id'].notnull(),
+        df['numero_factura'],
         np.where(
             df['estado'] == 'Reemplazada',
-            df['fecha_reemplazo'].dt.strftime('%Y-%m-%d').fillna(''),
+            df['reemplazada_por_numero_factura'],
             ""
         )
     )
-    
+    df['Fecha Generación'] = np.where(
+        df['factura_original_id'].notnull(),
+        df['fecha_gen_original_linked'],
+        df['fecha_generacion']
+    )
+    df['Fecha Reemplazo Factura'] = np.where(
+        df['factura_original_id'].notnull(),
+        df['fecha_generacion'].dt.strftime('%Y-%m-%d'),
+        np.where(
+            df['estado'] == 'Reemplazada',
+            df['fecha_reemplazo'].dt.strftime('%Y-%m-%d'),
+            ""
+        )
+    )
     df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
-    
-    df['Estado_for_tree'] = df['Estado']
-    df.loc[df['Días Restantes'] == "Refacturar", 'Estado_for_tree'] = "Vencidas"
-    df.loc[df['Días Restantes'] == "Hoy Vence", 'Estado_for_tree'] = "Vencidas"
+
+    cond_estado_vencidas = (df['Días Restantes'].isin(["Refacturar", "Hoy Vence"]))
+    df['Estado'] = np.where(cond_estado_vencidas, "Vencidas", df['Estado'])
 
     df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
     df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
-    df['Estado'] = df['Estado_for_tree']
-    
+
     df = df.rename(columns={
         'id': 'ID',
         'area_servicio': 'Área de Servicio',
@@ -166,12 +177,17 @@ def _process_factura_for_display_df(df_raw):
         'observacion_auditor': 'Observación Auditor'
     })
 
-    return df[[
+    columnas_finales = [
         'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
         'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
         'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
         'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
-    ]]
+    ]
+    for col in columnas_finales:
+        if col not in df.columns:
+            df[col] = None
+
+    return df[columnas_finales]
 
 def login_page():
     st.title("Iniciar Sesión - Trazabilidad de Facturas")
@@ -339,14 +355,22 @@ def display_bulk_load_section():
                     continue
                 fecha_generacion_db = fecha_generacion_csv_obj
                 fecha_hora_entrega_db = datetime.now()
+
+                if area_servicio_bulk in ["Hospitalizacion", "Urgencias"]:
+                    estado_auditoria_automatico_masivo = "Lista para Radicar"
+                else:
+                    estado_auditoria_automatico_masivo = "Pendiente"
+                
                 factura_id = db_ops.guardar_factura(
                     numero_factura=numero_factura_csv,
                     area_servicio=area_servicio_bulk,
                     facturador=facturador_bulk,
                     fecha_generacion=fecha_generacion_db,
                     eps=eps_bulk,
-                    fecha_hora_entrega=fecha_hora_entrega_db
+                    fecha_hora_entrega=fecha_hora_entrega_db,
+                    estado_auditoria=estado_auditoria_automatico_masivo  # <-- Pasa el nuevo parámetro
                 )
+
                 if factura_id:
                     if area_servicio_bulk == "SOAT":
                         db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
@@ -443,33 +467,74 @@ def display_invoice_table(user_role):
         "Area de Servicio": "area_servicio",
         "Estado Auditoria": "estado_auditoria"
     }.get(current_search_criterion)
-    facturas_raw = get_cached_facturas(search_term=current_search_term, search_column=db_column_name)
-    df_facturas = _process_factura_for_display_df(facturas_raw)
-    
+
+    cache_key = f"df_cache_{current_search_term}_{db_column_name}"
+    current_search_tuple = (current_search_term, db_column_name)
+
+    if (cache_key not in st.session_state or 
+        st.session_state.get('last_search_tuple') != current_search_tuple):
+        
+        facturas_raw = get_cached_facturas(search_term=current_search_term, 
+                                         search_column=db_column_name)
+        st.session_state[cache_key] = _process_factura_for_display_df(facturas_raw)
+        st.session_state['last_search_tuple'] = current_search_tuple
+        st.session_state['current_page'] = 0  # Resetear a primera página al buscar nuevo término
+
+    df_facturas = st.session_state[cache_key]
+
+    rows_per_page = 20
+    total_rows = len(df_facturas)
+    total_pages = max(1, (total_rows + rows_per_page - 1) // rows_per_page)
+
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 0
+    else:
+        st.session_state.current_page = max(0, min(st.session_state.current_page, total_pages - 1))
+
     if not df_facturas.empty:
-        df_facturas['sort_key'] = df_facturas.apply(lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor' else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador' else 3 if row["Días Restantes"] == "Refacturar" else 4, axis=1)
-        df_facturas = df_facturas.sort_values(by=['sort_key', 'Fecha Generación'], ascending=[True, False])
-        df_facturas = df_facturas.drop(columns=['sort_key'])
-        st.dataframe(df_facturas.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
+        start_idx = st.session_state.current_page * rows_per_page
+        end_idx = min(start_idx + rows_per_page, total_rows)
+        df_page = df_facturas.iloc[start_idx:end_idx].copy()
+
+        df_page['sort_key'] = df_page.apply(
+            lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor' 
+            else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador' 
+            else 3 if row["Días Restantes"] == "Refacturar" 
+            else 4, axis=1
+        )
+        df_page = df_page.sort_values(by=['sort_key', 'Fecha Generación'], ascending=[True, False])
+        df_page = df_page.drop(columns=['sort_key'])
+
+        st.dataframe(df_page.style.apply(highlight_rows, axis=1), 
+                    use_container_width=True, hide_index=True)
+
+        col_prev, col_page_info, col_next = st.columns([1, 3, 1])
+        with col_prev:
+            if st.button("⏪ Anterior", disabled=(st.session_state.current_page == 0)):
+                st.session_state.current_page -= 1
+                st.rerun()
+        with col_page_info:
+            st.markdown(f"**Página {st.session_state.current_page + 1} de {total_pages}** | **Filas: {start_idx + 1}-{end_idx} de {total_rows}**")
+        with col_next:
+            if st.button("Siguiente ⏩", disabled=(st.session_state.current_page >= total_pages - 1)):
+                st.session_state.current_page += 1
+                st.rerun()
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
-    # --- NUEVO: Selección múltiple para entrega masiva ---
     if not df_facturas.empty and user_role == 'auditor':
         st.markdown("### Entrega Masiva al Radicador")
-        # Filtra para solo mostrar facturas 'Lista para Radicar' o 'En Radicador' Y que no tengan fecha de entrega
         selectable_ids = df_facturas.loc[
             (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
             (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
             'ID'
         ].tolist()
-
+        
         with st.form("entrega_masiva_form"):
             selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
             submitted = st.form_submit_button("Marcar seleccionadas como entregadas")
     
             if submitted and selected_ids:
-                from datetime import datetime
                 fecha_entrega = datetime.now()
                 entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
                 
@@ -479,50 +544,81 @@ def display_invoice_table(user_role):
                     st.warning("No se pudieron marcar facturas como entregadas.")
                 
                 invalidate_all_caches()
+                if cache_key in st.session_state:
+                    del st.session_state[cache_key]
                 st.rerun()
 
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
     with col_export:
         if st.button("Exportar a CSV"):
-            export_df_to_csv(df_facturas)
+            export_df_to_csv(df_facturas)  # Exporta TODAS las facturas filtradas, no solo la página
 
-    selected_invoice_id = st.number_input("ID de Factura para Acción:", min_value=0, step=1, key=f"selected_invoice_id_input_{st.session_state.selected_invoice_input_key}")
+    selected_invoice_id = st.number_input("ID de Factura para Acción:", 
+                                        min_value=0, 
+                                        step=1, 
+                                        key=f"selected_invoice_id_input_{st.session_state.selected_invoice_input_key}")
 
     if selected_invoice_id > 0:
         factura_data_for_action = db_ops.obtener_factura_por_id(selected_invoice_id)
         if factura_data_for_action:
             st.session_state.current_invoice_data = factura_data_for_action
+            
             with col_edit:
                 if st.button("Cargar para Edición", key="edit_button"):
                     cargar_factura_para_edicion_action(selected_invoice_id)
                     st.rerun()
+                    
             with col_refacturar:
-                if not df_facturas.empty and selected_invoice_id in df_facturas['ID'].values:
+                if selected_invoice_id in df_facturas['ID'].values:
                     dias_restantes_df = df_facturas[df_facturas['ID'] == selected_invoice_id]['Días Restantes'].iloc[0]
                     if dias_restantes_df == "Refacturar":
                         if st.button("Refacturar", key="refacturar_button"):
                             cargar_factura_para_refacturar_action(selected_invoice_id)
                             st.rerun()
+
             if user_role == 'auditor':
                 st.markdown("---")
                 st.subheader("Acciones de Auditoría para Factura Seleccionada")
+                
                 estado_auditoria_default_index = 0
-                if st.session_state.current_invoice_data and st.session_state.current_invoice_data['estado_auditoria']:
-                    try: estado_auditoria_default_index = ESTADO_AUDITORIA_OPCIONES.index(st.session_state.current_invoice_data['estado_auditoria'])
-                    except ValueError: estado_auditoria_default_index = 0
+                if st.session_state.current_invoice_data['estado_auditoria']:
+                    try: 
+                        estado_auditoria_default_index = ESTADO_AUDITORIA_OPCIONES.index(
+                            st.session_state.current_invoice_data['estado_auditoria'])
+                    except ValueError: 
+                        estado_auditoria_default_index = 0
+                
                 tipo_error_default_index = 0
-                if st.session_state.current_invoice_data and st.session_state.current_invoice_data['tipo_error']:
-                    try: tipo_error_default_index = TIPO_ERROR_OPCIONES.index(st.session_state.current_invoice_data['tipo_error'])
-                    except ValueError: tipo_error_default_index = 0
+                if st.session_state.current_invoice_data['tipo_error']:
+                    try: 
+                        tipo_error_default_index = TIPO_ERROR_OPCIONES.index(
+                            st.session_state.current_invoice_data['tipo_error'])
+                    except ValueError: 
+                        tipo_error_default_index = 0
+                
                 with st.form(key=f"auditoria_form_{selected_invoice_id}", clear_on_submit=False):
-                    estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES if opt != 'Radicada y Aceptada']
-                    estado_auditoria_input = st.selectbox("Estado Auditoría:", options=estado_auditoria_options_filtered, index=estado_auditoria_default_index, key=f"estado_auditoria_{selected_invoice_id}")
-                    tipo_error_input = st.selectbox("Tipo de Error:", options=TIPO_ERROR_OPCIONES, index=tipo_error_default_index, key=f"tipo_error_{selected_invoice_id}")
-                    observacion_auditor_input = st.text_area("Observación Auditor:", value=st.session_state.current_invoice_data['observacion_auditor'] if st.session_state.current_invoice_data and st.session_state.current_invoice_data['observacion_auditor'] else "", key=f"observacion_auditor_{selected_invoice_id}")
+                    estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES 
+                                                       if opt != 'Radicada y Aceptada']
+                    estado_auditoria_input = st.selectbox("Estado Auditoría:", 
+                                                        options=estado_auditoria_options_filtered, 
+                                                        index=estado_auditoria_default_index, 
+                                                        key=f"estado_auditoria_{selected_invoice_id}")
+                    
+                    tipo_error_input = st.selectbox("Tipo de Error:", 
+                                                  options=TIPO_ERROR_OPCIONES, 
+                                                  index=tipo_error_default_index, 
+                                                  key=f"tipo_error_{selected_invoice_id}")
+                    
+                    observacion_auditor_input = st.text_area("Observación Auditor:", 
+                                                           value=st.session_state.current_invoice_data['observacion_auditor'] or "", 
+                                                           key=f"observacion_auditor_{selected_invoice_id}")
+                    
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
-                        auditar_factura_action(selected_invoice_id, estado_auditoria_input, observacion_auditor_input, tipo_error_input)
+                        auditar_factura_action(selected_invoice_id, estado_auditoria_input, 
+                                             observacion_auditor_input, tipo_error_input)
                         st.rerun()
+                
                 if factura_data_for_action['estado_auditoria'] in ['Lista para Radicar', 'En Radicador']:
                     fecha_entrega_radicador_val = factura_data_for_action['fecha_entrega_radicador']
                     fecha_entrega_radicador_checked = st.checkbox(
@@ -531,11 +627,16 @@ def display_invoice_table(user_role):
                         key=f"radicador_checkbox_{selected_invoice_id}"
                     )
                     if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
-                        actualizar_fecha_entrega_radicador_action(selected_invoice_id, fecha_entrega_radicador_checked)
+                        actualizar_fecha_entrega_radicador_action(selected_invoice_id, 
+                                                                fecha_entrega_radicador_checked)
                         st.rerun()
+                
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):
                     st.session_state.confirm_delete_id = selected_invoice_id
-                if 'confirm_delete_id' in st.session_state and st.session_state.confirm_delete_id == selected_invoice_id:
+                
+                if ('confirm_delete_id' in st.session_state and 
+                    st.session_state.confirm_delete_id == selected_invoice_id):
+                    
                     st.warning(f"¿Estás seguro de que quieres eliminar la factura ID: {selected_invoice_id}?\nEsta acción es irreversible.")
                     col_confirm_del, col_cancel_del = st.columns(2)
                     with col_confirm_del:
@@ -545,8 +646,11 @@ def display_invoice_table(user_role):
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None
                                 invalidate_all_caches()
+                                if cache_key in st.session_state:
+                                    del st.session_state[cache_key]
                                 cancelar_edicion_action()
-                            else: st.error("No se pudo eliminar la factura.")
+                            else: 
+                                st.error("No se pudo eliminar la factura.")
                             st.rerun()
                     with col_cancel_del:
                         if st.button("Cancelar", key="cancel_delete_button_modal"):
@@ -581,18 +685,25 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         return
     fecha_generacion_db = fecha_generacion_obj
     fecha_hora_entrega = datetime.now()
+
+    if area_servicio in ["Hospitalizacion", "Urgencias"]:
+        estado_auditoria_automatico = "Lista para Radicar"
+    else:
+        estado_auditoria_automatico = "Pendiente"
+
     factura_id = db_ops.guardar_factura(
         numero_factura=numero_factura,
         area_servicio=area_servicio,
         facturador=facturador,
         fecha_generacion=fecha_generacion_db,
         eps=eps,
-        fecha_hora_entrega=fecha_hora_entrega
+        fecha_hora_entrega=fecha_hora_entrega,
+        estado_auditoria=estado_auditoria_automatico  # <-- Nuevo parámetro
     )
     if factura_id:
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
-        st.success("Factura guardada correctamente.")
+        st.success(f"Factura guardada correctamente. Estado: {estado_auditoria_automatico}")
         invalidate_all_caches()
         cancelar_edicion_action()
     else:
