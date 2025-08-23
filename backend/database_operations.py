@@ -131,17 +131,20 @@ def obtener_credenciales_usuario(username):
         logging.error(f"Error al obtener credenciales del usuario '{username}': {e}")
         return None
 
-def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria="Pendiente"):  # <-- Nuevo parámetro con valor por defecto
+# ENCUENTRA ESTA FUNCIÓN Y MODIFÍCALA
+# Cambia la definición de la función para aceptar los nuevos parámetros
+def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria="Pendiente", lote_carga_masiva=None):  # <-- Nuevos parámetros aquí
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
             with conn.cursor() as cursor:
+                # MODIFICA la consulta SQL para incluir los nuevos campos
                 cursor.execute("""
-                    INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
-                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria))  # <-- Añade el nuevo valor aquí
+                    INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria, lote_carga_masiva)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria, lote_carga_masiva))  # <-- Añade los valores aquí
                 factura_id = cursor.fetchone()[0]
-                logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}. Estado Auditoría: {estado_auditoria}")
+                logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}. Estado: {estado_auditoria}, Lote: {lote_carga_masiva}")
                 return factura_id
     except errors.UniqueViolation as e:
         logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
@@ -195,6 +198,7 @@ def obtener_factura_por_id(factura_id):
     except Error as e:
         logging.error(f"Error al obtener factura por ID {factura_id}: {e}")
         return None
+
 
 def obtener_factura_por_numero(numero_factura):
     try:
@@ -547,4 +551,55 @@ def obtener_eps_unicas():
                 return epss
     except Error as e:
         logging.error(f"Error al obtener EPS únicas: {e}")
+        return []
+
+def obtener_lotes_unicos():
+    """Obtiene lotes que tienen facturas que SÍ necesitan auditoría (excluye 'Lista para Radicar')"""
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT DISTINCT lote_carga_masiva 
+                    FROM facturas 
+                    WHERE lote_carga_masiva IS NOT NULL
+                    AND estado_auditoria IN ('Pendiente', 'Devuelta por Auditor', 'Corregida por Legalizador')  -- ← EXCLUYE 'Lista para Radicar'
+                    ORDER BY lote_carga_masiva DESC;
+                """)
+                lotes = [row[0] for row in cursor.fetchall()]
+                logging.info(f"Lotes únicos con facturas pendientes obtenidos: {len(lotes)}")
+                return lotes
+    except Error as e:
+        logging.error(f"Error al obtener lotes únicos: {e}")
+        return []
+
+def cargar_facturas_por_lote(numero_lote):
+    """Carga todas las facturas que pertenecen a un número de lote específico."""
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return []
+            with conn.cursor() as cursor:
+                # Usamos la misma query que en cargar_facturas, pero filtrando por lote
+                query = """
+                    SELECT
+                        f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
+                        f.fecha_hora_entrega, f.tiene_correccion, f.descripcion_devolucion,
+                        f.fecha_devolucion_lider, f.revisado, f.factura_original_id, f.estado,
+                        f.reemplazada_por_numero_factura, f.estado_auditoria, f.observacion_auditor,
+                        f.tipo_error, f.fecha_reemplazo, f.fecha_entrega_radicador, f.lote_carga_masiva,
+                        fo.numero_factura AS num_fact_original_linked,
+                        fo.fecha_generacion AS fecha_gen_original_linked
+                    FROM facturas f
+                    LEFT JOIN facturas fo ON f.factura_original_id = fo.id
+                    WHERE f.lote_carga_masiva = %s
+                    ORDER BY f.id;
+                """
+                cursor.execute(query, (numero_lote,))
+                column_names = [desc[0] for desc in cursor.description]
+                facturas_raw = cursor.fetchall()
+                facturas = [dict(zip(column_names, row)) for row in facturas_raw]
+                logging.info(f"Se cargaron {len(facturas)} facturas para el lote: {numero_lote}")
+                return facturas
+    except Error as e:
+        logging.error(f"Error al cargar facturas por lote '{numero_lote}': {e}")
         return []
