@@ -277,7 +277,7 @@ def display_invoice_entry_form(user_role):
             st.markdown("---")
             st.subheader("Datos de Refacturación")
             new_numero_factura = st.text_input("Nuevo Número de Factura:")
-            fecha_reemplazo_factura = st.text_input("Fecha de Generación de la Nueva Factura (YYYY-MM-DD o DD/MM/YYYY):", value=datetime.now().strftime('%Y-%m-%d'))
+            fecha_reemplazo_factura = st.text_input("Fecha de Generación de la Nueva Factura (YYYY-MM-DD or DD/MM/YYYY):", value=datetime.now().strftime('%Y-%m-%d'))
         else:
             new_numero_factura = None
             fecha_reemplazo_factura = None
@@ -302,12 +302,13 @@ def display_invoice_entry_form(user_role):
                     st.rerun()
 
         if submitted:
+            result = None
             if st.session_state.refacturar_mode:
-                guardar_factura_reemplazo_action(st.session_state.editing_factura_id, new_numero_factura, fecha_reemplazo_factura, facturador, eps, area_servicio)
+                result = guardar_factura_reemplazo_action(st.session_state.editing_factura_id, new_numero_factura, fecha_reemplazo_factura, facturador, eps, area_servicio)
             elif st.session_state.edit_mode:
                 original_data = db_ops.obtener_factura_por_id(st.session_state.editing_factura_id)
                 if original_data:
-                    actualizar_factura_action(
+                    result = actualizar_factura_action(
                         st.session_state.editing_factura_id,
                         numero_factura,
                         area_servicio,
@@ -330,7 +331,42 @@ def display_invoice_entry_form(user_role):
                 else:
                     st.error("Error: No se pudo recuperar la factura original para actualizar.")
             else:
-                guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
+                result = guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
+            
+            # Guardar el resultado para mostrar el botón FUERA del form
+            if result and 'reporte_data' in result:
+                st.session_state.reporte_individual_data = result['reporte_data']
+            
+            st.rerun()
+
+    # --- NUEVO: MOSTRAR BOTÓN DE DESCARGA FUERA DEL FORM ---
+    if 'reporte_individual_data' in st.session_state and st.session_state.reporte_individual_data:
+        datos_reporte = st.session_state.reporte_individual_data
+        
+        # Generar el reporte HTML
+        from utils.io_utils import generar_reporte_carga_individual
+        reporte_html = generar_reporte_carga_individual(
+            facturador=datos_reporte['facturador'],
+            eps=datos_reporte['eps'],
+            area_servicio=datos_reporte['area_servicio'],
+            factura_data=datos_reporte['factura_data'],
+            fecha_hora_carga=datetime.now()
+        )
+        
+        st.success("✅ Factura guardada correctamente. Descarga tu relación:")
+        
+        # Mostrar botón de descarga (FUERA del form)
+        st.download_button(
+            label="📄 Imprimir Relación de Carga Individual",
+            data=reporte_html,
+            file_name=f"relacion_carga_individual_{datos_reporte['numero_factura']}.html",
+            mime="text/html",
+            key=f"download_individual_{datos_reporte['factura_id']}"
+        )
+        
+        # Botón para limpiar
+        if st.button("Cerrar Reporte"):
+            del st.session_state.reporte_individual_data
             st.rerun()
 
 def display_bulk_load_section():
@@ -937,34 +973,31 @@ def display_invoice_table(user_role):
 def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str, area_servicio):
     if not all([facturador, eps, numero_factura, fecha_generacion_str, area_servicio]):
         st.error("Todos los campos son obligatorios.")
-        return
+        return None
     if not numero_factura.isdigit():
         st.error("El campo 'Número de Factura' debe contener solo números.")
-        return
+        return None
     
     factura_existente = db_ops.obtener_factura_por_numero(numero_factura)
     if factura_existente:
         st.error(f"Error: La factura con el número '{numero_factura}' ya existe en la base de datos.")
-        return
+        return None
 
     fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generación")
     if fecha_generacion_obj is None:
-        return
+        return None
     if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"):
-        return
+        return None
     fecha_generacion_db = fecha_generacion_obj
     fecha_hora_entrega = datetime.now()
 
     # --- NUEVA LÓGICA: Determinar estado de auditoría automático ---
-    # Si el área de servicio es Hospitalización o Urgencias, estado será "Lista para Radicar"
     if area_servicio in ["Hospitalizacion", "Urgencias"]:
         estado_auditoria_automatico = "Lista para Radicar"
     else:
-        estado_auditoria_automatico = "Pendiente"  # Estado por defecto para otras áreas
+        estado_auditoria_automatico = "Pendiente"
     # --- FIN NUEVA LÓGICA ---
 
-    # NOTA: Ahora necesitamos usar una función de base de datos que acepte el estado_auditoria.
-    # Si tu función db_ops.guardar_factura no acepta este parámetro, necesitaremos modificarla primero.
     factura_id = db_ops.guardar_factura(
         numero_factura=numero_factura,
         area_servicio=area_servicio,
@@ -972,16 +1005,39 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         fecha_generacion=fecha_generacion_db,
         eps=eps,
         fecha_hora_entrega=fecha_hora_entrega,
-        estado_auditoria=estado_auditoria_automatico  # <-- Nuevo parámetro
+        estado_auditoria=estado_auditoria_automatico
     )
+    
     if factura_id:
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
-        st.success(f"Factura guardada correctamente. Estado: {estado_auditoria_automatico}")
-        invalidate_all_caches()
-        cancelar_edicion_action()
+        
+        # Obtener los datos completos de la factura recién guardada
+        factura_data = db_ops.obtener_factura_por_id(factura_id)
+        
+        if factura_data:
+            # Preparar datos para el reporte (PERO NO crear el botón aquí)
+            reporte_data = {
+                'facturador': facturador,
+                'eps': eps,
+                'area_servicio': area_servicio,
+                'factura_data': factura_data,
+                'numero_factura': numero_factura,
+                'factura_id': factura_id
+            }
+            
+            st.success(f"Factura guardada correctamente. Estado: {estado_auditoria_automatico}")
+            invalidate_all_caches()
+            cancelar_edicion_action()
+            
+            # Retornar los datos para generar el botón FUERA del form
+            return {'success': True, 'reporte_data': reporte_data}
+        else:
+            st.error("Error: No se pudieron obtener los datos de la factura guardada.")
+            return None
     else:
         st.error(f"Error al guardar la factura. Esto puede ocurrir si el número de factura ya existe. Por favor, verifique y vuelva a intentarlo.")
+        return None
 
 def actualizar_factura_action(factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps,
                              fecha_hora_entrega, tiene_correccion, descripcion_devolucion,
@@ -989,13 +1045,15 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
                              reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo):
     if not all([factura_id, numero_factura, area_servicio, facturador, fecha_generacion_str, eps]):
         st.error("Todos los campos son obligatorios para la actualización.")
-        return
+        return None
     if not numero_factura.isdigit():
         st.error("El campo 'Número de Factura' debe contener solo números.")
-        return
+        return None
     fecha_generacion_obj = parse_date(fecha_generacion_str, "Fecha de Generación")
-    if fecha_generacion_obj is None: return
-    if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"): return
+    if fecha_generacion_obj is None: 
+        return None
+    if not validate_future_date(fecha_generacion_obj, "Fecha de Generación"): 
+        return None
     fecha_generacion_db = fecha_generacion_obj
     success = db_ops.actualizar_factura(
         factura_id, numero_factura, area_servicio, facturador, fecha_generacion_db, eps,
@@ -1004,11 +1062,31 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
         reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo
     )
     if success:
-        st.success("Factura actualizada correctamente.")
-        invalidate_all_caches()
-        cancelar_edicion_action()
+        # Obtener datos actualizados para el reporte
+        factura_data = db_ops.obtener_factura_por_id(factura_id)
+        
+        if factura_data:
+            reporte_data = {
+                'facturador': facturador,
+                'eps': eps,
+                'area_servicio': area_servicio,
+                'factura_data': factura_data,
+                'numero_factura': numero_factura,
+                'factura_id': factura_id,
+                'tipo': 'actualizacion'
+            }
+            
+            st.success("Factura actualizada correctamente.")
+            invalidate_all_caches()
+            cancelar_edicion_action()
+            
+            return {'success': True, 'reporte_data': reporte_data}
+        else:
+            st.error("Error: No se pudieron obtener los datos actualizados de la factura.")
+            return None
     else:
         st.error(f"No se pudo actualizar la factura. El número de factura '{numero_factura}' ya podría existir con la misma combinación de Legalizador, EPS y Área de Servicio.")
+        return None
 
 def cargar_factura_para_edicion_action(factura_id):
     factura_data = db_ops.obtener_factura_por_id(factura_id)
@@ -1061,19 +1139,21 @@ def eliminar_factura_action(factura_id):
 def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_reemplazo_factura_str, facturador, eps, area_servicio):
     if not new_numero_factura:
         st.error("El campo 'Nuevo Número de Factura' es obligatorio.")
-        return
+        return None
     if not new_numero_factura.isdigit():
         st.error("El 'Nuevo Número de Factura' debe contener solo números.")
-        return
+        return None
     
     factura_existente = db_ops.obtener_factura_por_numero(new_numero_factura)
     if factura_existente:
         st.error(f"Error: El nuevo número de factura '{new_numero_factura}' ya existe en la base de datos. Por favor, ingrese un número diferente.")
-        return
+        return None
 
     fecha_reemplazo_factura_obj = parse_date(fecha_reemplazo_factura_str, "Fecha de Generación de la Nueva Factura")
-    if fecha_reemplazo_factura_obj is None: return
-    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): return
+    if fecha_reemplazo_factura_obj is None: 
+        return None
+    if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): 
+        return None
     
     success = db_ops.guardar_factura_reemplazo(
         old_factura_id,
@@ -1082,11 +1162,31 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     )
     
     if success:
-        st.success(f"Factura ID: {old_factura_id} actualizada como reemplazada por {new_numero_factura} correctamente.")
-        invalidate_all_caches()
-        cancelar_edicion_action()
+        # Obtener datos de la factura reemplazada para el reporte
+        factura_data = db_ops.obtener_factura_por_id(old_factura_id)
+        
+        if factura_data:
+            reporte_data = {
+                'facturador': facturador,
+                'eps': eps,
+                'area_servicio': area_servicio,
+                'factura_data': factura_data,
+                'numero_factura': new_numero_factura,
+                'factura_id': old_factura_id,
+                'tipo': 'reemplazo'
+            }
+            
+            st.success(f"Factura ID: {old_factura_id} actualizada como reemplazada por {new_numero_factura} correctamente.")
+            invalidate_all_caches()
+            cancelar_edicion_action()
+            
+            return {'success': True, 'reporte_data': reporte_data}
+        else:
+            st.error("Error: No se pudieron obtener los datos de la factura reemplazada.")
+            return None
     else:
         st.error(f"No se pudo guardar la factura de reemplazo.")
+        return None
 
 def marcar_como_corregida_action(factura_id, observacion_actual, tipo_error_actual):
     if st.session_state.user_role != 'legalizador':
