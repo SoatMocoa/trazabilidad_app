@@ -747,11 +747,11 @@ def display_invoice_table(user_role):
     current_search_tuple = (current_search_term, db_column_name)
 
     # Solo cargar datos si la búsqueda cambió
-    if (cache_key not in st.session_state or 
+    if (cache_key not in st.session_state or
         st.session_state.get('last_search_tuple') != current_search_tuple):
         
-        facturas_raw = get_cached_facturas(search_term=current_search_term, 
-                                         search_column=db_column_name)
+        facturas_raw = get_cached_facturas(search_term=current_search_term,
+                                           search_column=db_column_name)
         st.session_state[cache_key] = _process_factura_for_display_df(facturas_raw.copy())
         st.session_state['last_search_tuple'] = current_search_tuple
         st.session_state['current_page'] = 0  # Resetear a primera página al buscar nuevo término
@@ -777,17 +777,17 @@ def display_invoice_table(user_role):
 
         # Ordenar solo la página actual (mucho más rápido)
         df_page['sort_key'] = df_page.apply(
-            lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor' 
-            else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador' 
-            else 3 if row["Días Restantes"] == "Refacturar" 
+            lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor'
+            else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador'
+            else 3 if row["Días Restantes"] == "Refacturar"
             else 4, axis=1
         )
         df_page = df_page.sort_values(by=['sort_key', 'Fecha Generación'], ascending=[True, False])
         df_page = df_page.drop(columns=['sort_key'])
 
         # Mostrar solo la página actual
-        st.dataframe(df_page.style.apply(highlight_rows, axis=1), 
-                    use_container_width=True, hide_index=True)
+        st.dataframe(df_page.style.apply(highlight_rows, axis=1),
+                     use_container_width=True, hide_index=True)
 
         # --- Controles de Paginación ---
         col_prev, col_page_info, col_next = st.columns([1, 3, 1])
@@ -816,21 +816,27 @@ def display_invoice_table(user_role):
         with st.form("entrega_masiva_form"):
             selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
             submitted = st.form_submit_button("Marcar seleccionadas como entregadas")
-    
+            
+            # TODO: Lógica para manejar el envío del formulario
             if submitted and selected_ids:
                 fecha_entrega = datetime.now()
                 entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
                 
                 if entregadas_count > 0:
-                    st.success(f"{entregadas_count} facturas marcadas como entregadas.")
+                    st.session_state['entrega_masiva_status'] = f"✅ {entregadas_count} facturas marcadas como entregadas."
                 else:
-                    st.warning("No se pudieron marcar facturas como entregadas.")
+                    st.session_state['entrega_masiva_status'] = "⚠️ No se pudieron marcar facturas como entregadas."
                 
                 invalidate_all_caches()
-                # Limpiar caché específica
+                # Limpiar caché específica para forzar la recarga de datos
                 if cache_key in st.session_state:
                     del st.session_state[cache_key]
-                st.rerun()
+
+    # Muestra el mensaje de éxito/fracaso fuera del formulario para evitar el UnboundLocalError
+    if 'entrega_masiva_status' in st.session_state:
+        st.info(st.session_state['entrega_masiva_status'])
+        del st.session_state['entrega_masiva_status']
+        st.rerun() # Fuerza una re-ejecución final para limpiar el mensaje.
 
     # --- Botones de Acción General ---
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
@@ -838,11 +844,11 @@ def display_invoice_table(user_role):
         if st.button("Exportar a CSV"):
             # --- NUEVA SOLUCIÓN: Generar y descargar el CSV directamente aquí ---
             try:
-                from datetime import datetime  # Asegúrate de tener este import al inicio del archivo
+                # Asegúrate de tener este import al inicio del archivo
                 csv = df_facturas.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="📥 Descargar CSV", 
-                    data=csv, 
+                    label="📥 Descargar CSV",
+                    data=csv,
                     file_name=f"facturas_trazabilidad_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv",
                     key="download_csv_full"
@@ -851,10 +857,10 @@ def display_invoice_table(user_role):
                 st.error(f"Error al generar el CSV: {e}")
 
     # --- Input de ID para Acciones - FUERA de la paginación ---
-    selected_invoice_id = st.number_input("ID de Factura para Acción:", 
-                                        min_value=0, 
-                                        step=1, 
-                                        key=f"selected_invoice_id_input_{st.session_state.selected_invoice_input_key}")
+    selected_invoice_id = st.number_input("ID de Factura para Acción:",
+                                         min_value=0,
+                                         step=1,
+                                         key=f"selected_invoice_id_input_{st.session_state.selected_invoice_input_key}")
 
     # --- Lógica de Acciones para la Factura Seleccionada ---
     if selected_invoice_id > 0:
@@ -898,26 +904,26 @@ def display_invoice_table(user_role):
                         tipo_error_default_index = 0
                 
                 with st.form(key=f"auditoria_form_{selected_invoice_id}", clear_on_submit=False):
-                    estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES 
-                                                       if opt != 'Radicada y Aceptada']
-                    estado_auditoria_input = st.selectbox("Estado Auditoría:", 
-                                                        options=estado_auditoria_options_filtered, 
-                                                        index=estado_auditoria_default_index, 
-                                                        key=f"estado_auditoria_{selected_invoice_id}")
+                    estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES
+                                                         if opt != 'Radicada y Aceptada']
+                    estado_auditoria_input = st.selectbox("Estado Auditoría:",
+                                                          options=estado_auditoria_options_filtered,
+                                                          index=estado_auditoria_default_index,
+                                                          key=f"estado_auditoria_{selected_invoice_id}")
                     
-                    tipo_error_input = st.selectbox("Tipo de Error:", 
-                                                  options=TIPO_ERROR_OPCIONES, 
-                                                  index=tipo_error_default_index, 
-                                                  key=f"tipo_error_{selected_invoice_id}")
+                    tipo_error_input = st.selectbox("Tipo de Error:",
+                                                    options=TIPO_ERROR_OPCIONES,
+                                                    index=tipo_error_default_index,
+                                                    key=f"tipo_error_{selected_invoice_id}")
                     
-                    observacion_auditor_input = st.text_area("Observación Auditor:", 
-                                                           value=st.session_state.current_invoice_data['observacion_auditor'] or "", 
-                                                           key=f"observacion_auditor_{selected_invoice_id}")
+                    observacion_auditor_input = st.text_area("Observación Auditor:",
+                                                            value=st.session_state.current_invoice_data['observacion_auditor'] or "",
+                                                            key=f"observacion_auditor_{selected_invoice_id}")
                     
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
-                        auditar_factura_action(selected_invoice_id, estado_auditoria_input, 
-                                             observacion_auditor_input, tipo_error_input)
+                        auditar_factura_action(selected_invoice_id, estado_auditoria_input,
+                                               observacion_auditor_input, tipo_error_input)
                         st.rerun()
                 
                 # Checkbox para entrega al radicador
@@ -929,8 +935,8 @@ def display_invoice_table(user_role):
                         key=f"radicador_checkbox_{selected_invoice_id}"
                     )
                     if fecha_entrega_radicador_checked != bool(fecha_entrega_radicador_val):
-                        actualizar_fecha_entrega_radicador_action(selected_invoice_id, 
-                                                                fecha_entrega_radicador_checked)
+                        actualizar_fecha_entrega_radicador_action(selected_invoice_id,
+                                                                 fecha_entrega_radicador_checked)
                         st.rerun()
                 
                 # Botón de eliminar
@@ -938,7 +944,7 @@ def display_invoice_table(user_role):
                     st.session_state.confirm_delete_id = selected_invoice_id
                 
                 # Confirmación de eliminación
-                if ('confirm_delete_id' in st.session_state and 
+                if ('confirm_delete_id' in st.session_state and
                     st.session_state.confirm_delete_id == selected_invoice_id):
                     
                     st.warning(f"¿Estás seguro de que quieres eliminar la factura ID: {selected_invoice_id}?\nEsta acción es irreversible.")
