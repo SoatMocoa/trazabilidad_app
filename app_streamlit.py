@@ -811,66 +811,104 @@ def display_invoice_table(user_role):
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
-    # --- ENTREGA MASIVA POR LOTE (VERSIÓN CORREGIDA) ---
+    # --- ENTREGA MASIVA GENERAL (PARA FACTURAS ANTIGUAS SIN LOTE) ---
     if not df_facturas.empty and user_role == 'auditor':
-        st.markdown("### 📦 Entrega Masiva al Radicador por Lote")
+        st.markdown("### 📦 Entrega Masiva General")
         
-        # Obtener lotes únicos de las facturas visibles
-        lotes_disponibles = sorted([lote for lote in df_facturas['Lote'].unique() 
-                                  if lote is not None and str(lote).strip() != ''])
+        # Facturas listas para radicar (TODO lo que estaba listo antes)
+        selectable_ids = df_facturas.loc[
+            (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
+            (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
+            'ID'
+        ].tolist()
         
-        if lotes_disponibles:
-            with st.form("entrega_masiva_lote_form"):
-                # Seleccionar lote específico
-                selected_lote = st.selectbox(
-                    "Seleccione el lote a entregar:",
-                    options=lotes_disponibles,
-                    key="lote_selection_masiva"
+        if selectable_ids:
+            with st.form("entrega_masiva_general_form"):
+                selected_ids = st.multiselect(
+                    "Seleccione las facturas a marcar como entregadas:", 
+                    selectable_ids,
+                    key="masiva_radicador_general"
                 )
                 
-                # Filtrar facturas del lote seleccionado que estén listas para radicar
-                facturas_del_lote = df_facturas[
-                    (df_facturas['lote_carga_masiva'] == selected_lote) &
-                    (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
-                    (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == ''))
-                ]
+                submitted = st.form_submit_button("🚚 Entregar al Radicador")
                 
-                if not facturas_del_lote.empty:
-                    st.write(f"**Facturas en lote {selected_lote} listas para radicar:**")
-                    st.dataframe(facturas_del_lote[['ID', 'Número de Factura', 'Estado Auditoria', 'Facturador']], 
-                                hide_index=True, use_container_width=True)
+                if submitted and selected_ids:
+                    fecha_entrega = datetime.now()
+                    entregadas_count = db_ops.actualizar_entrega_masiva_radicador(selected_ids, fecha_entrega)
                     
-                    # Seleccionar facturas específicas del lote
-                    options_ids = facturas_del_lote['ID'].tolist()
-                    default_ids = options_ids  # Seleccionar todas por defecto
-                    
-                    selected_ids = st.multiselect(
-                        "Seleccione las facturas a entregar:",
-                        options=options_ids,
-                        default=default_ids,
-                        key=f"multiselect_lote_{selected_lote}"
+                    if entregadas_count > 0:
+                        st.success(f"✅ {entregadas_count} facturas entregadas al radicador!")
+                        invalidate_all_caches()
+                        # Limpiar caché específica
+                        if cache_key in st.session_state:
+                            del st.session_state[cache_key]
+                        st.rerun()
+                    else:
+                        st.error("❌ No se pudieron entregar las facturas.")
+        else:
+            st.info("No hay facturas listas para radicar en este momento.")
+
+    # --- ENTREGA POR LOTES (PARA FACTURAS NUEVAS) ---
+    if not df_facturas.empty and user_role == 'auditor':
+        st.markdown("### 📦 Entregar por Lote")
+        
+        # Verificar si tenemos la columna de Lote
+        if 'Lote' in df_facturas.columns:
+            # Obtener lotes únicos que tengan facturas listas para radicar
+            lotes_con_facturas = df_facturas[
+                (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
+                (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == ''))
+            ]
+            
+            lotes_disponibles = sorted([lote for lote in lotes_con_facturas['Lote'].unique() 
+                                      if lote is not None and str(lote).strip() != ''])
+            
+            if lotes_disponibles:
+                with st.form("entrega_por_lote_form"):
+                    selected_lote = st.selectbox(
+                        "Seleccione el lote a entregar:",
+                        options=lotes_disponibles,
+                        key="lote_selection_masiva"
                     )
                     
-                    submitted = st.form_submit_button(f"🚚 Entregar Lote {selected_lote}")
-                
-                    if submitted and selected_ids:
-                        fecha_entrega = datetime.now()
-                        # Usar tu función existente
-                        entregadas_count = db_ops.actualizar_entrega_masiva_radicador(selected_ids, fecha_entrega)
+                    # Filtrar facturas del lote seleccionado
+                    facturas_del_lote = lotes_con_facturas[lotes_con_facturas['Lote'] == selected_lote]
+                    
+                    if not facturas_del_lote.empty:
+                        st.write(f"**Facturas en lote {selected_lote} listas para radicar:**")
+                        st.dataframe(facturas_del_lote[['ID', 'Número de Factura', 'Estado Auditoria', 'Facturador']], 
+                                    hide_index=True, use_container_width=True)
                         
-                        if entregadas_count > 0:
-                            st.success(f"✅ {entregadas_count} facturas del lote {selected_lote} entregadas correctamente.")
-                            invalidate_all_caches()
-                            # Limpiar caché específica
-                            if cache_key in st.session_state:
-                                del st.session_state[cache_key]
-                            st.rerun()
-                        else:
-                            st.error("❌ No se pudieron entregar las facturas.")
-                else:
-                    st.info(f"No hay facturas listas para radicar en el lote {selected_lote}.")
+                        # Seleccionar facturas específicas del lote
+                        options_ids = facturas_del_lote['ID'].tolist()
+                        
+                        selected_ids = st.multiselect(
+                            "Seleccione las facturas a entregar:",
+                            options=options_ids,
+                            default=options_ids,  # Seleccionar todas por defecto
+                            key=f"multiselect_lote_{selected_lote}"
+                        )
+                        
+                        submitted = st.form_submit_button(f"🚚 Entregar Lote {selected_lote}")
+                    
+                        if submitted and selected_ids:
+                            fecha_entrega = datetime.now()
+                            entregadas_count = db_ops.actualizar_entrega_masiva_radicador(selected_ids, fecha_entrega)
+                            
+                            if entregadas_count > 0:
+                                st.success(f"✅ {entregadas_count} facturas del lote {selected_lote} entregadas!")
+                                invalidate_all_caches()
+                                if cache_key in st.session_state:
+                                    del st.session_state[cache_key]
+                                st.rerun()
+                            else:
+                                st.error("❌ No se pudieron entregar las facturas.")
+                    else:
+                        st.info(f"No hay facturas listas para radicar en el lote {selected_lote}.")
+            else:
+                st.info("No hay lotes con facturas listas para radicar.")
         else:
-            st.info("No se encontraron lotes con facturas listas para radicar.")
+            st.info("No hay información de lotes disponible.")
 
     # --- Botones de Acción General ---
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
