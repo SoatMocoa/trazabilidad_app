@@ -87,7 +87,7 @@ def get_selectbox_default_index(options_list, current_value):
 def _process_factura_for_display_df(df_raw):
     if df_raw is None or len(df_raw) == 0:
         return pd.DataFrame(columns=[
-            'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
+            'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',  # ← Agregué 'Lote'
             'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
             'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
             'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
@@ -179,6 +179,12 @@ def _process_factura_for_display_df(df_raw):
     df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
 
+    # AGREGAR COLUMNA DE LOTE (NUEVO)
+    if 'lote_carga_masiva' in df.columns:
+        df['Lote'] = df['lote_carga_masiva']
+    else:
+        df['Lote'] = None  # Si no existe la columna, llenar con None
+
     # Renombrar columnas
     df = df.rename(columns={
         'id': 'ID',
@@ -190,13 +196,14 @@ def _process_factura_for_display_df(df_raw):
         'observacion_auditor': 'Observación Auditor'
     })
 
-    # Seleccionar y ordenar columnas finales
+    # Seleccionar y ordenar columnas finales (AGREGAR 'Lote')
     columnas_finales = [
-        'ID', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
+        'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',  # ← 'Lote' agregado
         'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
         'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
         'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
     ]
+    
     # Asegurarse de que todas las columnas existan en el DataFrame
     for col in columnas_finales:
         if col not in df.columns:
@@ -759,7 +766,7 @@ def display_invoice_table(user_role):
     df_facturas = st.session_state[cache_key]
 
     # --- Configuración de Paginación ---
-    rows_per_page = 50
+    rows_per_page = 15
     total_rows = len(df_facturas)
     total_pages = max(1, (total_rows + rows_per_page - 1) // rows_per_page)
 
@@ -804,47 +811,72 @@ def display_invoice_table(user_role):
     else:
         st.info("No hay facturas registradas que coincidan con los criterios de búsqueda.")
 
-    # --- Entrega Masiva al Radicador (usa df_facturas completo para los filtros) ---
+    # --- ENTREGA MASIVA POR LOTE (VERSIÓN CORREGIDA) ---
     if not df_facturas.empty and user_role == 'auditor':
-        st.markdown("### Entrega Masiva al Radicador")
-        selectable_ids = df_facturas.loc[
-            (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
-            (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
-            'ID'
-        ].tolist()
+        st.markdown("### 📦 Entrega Masiva al Radicador por Lote")
         
-        with st.form("entrega_masiva_form"):
-            selected_ids = st.multiselect("Seleccione las facturas a marcar como entregadas:", selectable_ids)
-            submitted = st.form_submit_button("Marcar seleccionadas como entregadas")
-            
-            # TODO: Lógica para manejar el envío del formulario
-            if submitted and selected_ids:
-                fecha_entrega = datetime.now()
-                entregadas_count = db_ops.entregar_facturas_radicador(selected_ids, fecha_entrega)
+        # Obtener lotes únicos de las facturas visibles
+        lotes_disponibles = sorted([lote for lote in df_facturas['Lote'].unique() 
+                                  if lote is not None and str(lote).strip() != ''])
+        
+        if lotes_disponibles:
+            with st.form("entrega_masiva_lote_form"):
+                # Seleccionar lote específico
+                selected_lote = st.selectbox(
+                    "Seleccione el lote a entregar:",
+                    options=lotes_disponibles,
+                    key="lote_selection_masiva"
+                )
                 
-                if entregadas_count > 0:
-                    st.session_state['entrega_masiva_status'] = f"✅ {entregadas_count} facturas marcadas como entregadas."
+                # Filtrar facturas del lote seleccionado que estén listas para radicar
+                facturas_del_lote = df_facturas[
+                    (df_facturas['lote_carga_masiva'] == selected_lote) &
+                    (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
+                    (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == ''))
+                ]
+                
+                if not facturas_del_lote.empty:
+                    st.write(f"**Facturas en lote {selected_lote} listas para radicar:**")
+                    st.dataframe(facturas_del_lote[['ID', 'Número de Factura', 'Estado Auditoria', 'Facturador']], 
+                                hide_index=True, use_container_width=True)
+                    
+                    # Seleccionar facturas específicas del lote
+                    options_ids = facturas_del_lote['ID'].tolist()
+                    default_ids = options_ids  # Seleccionar todas por defecto
+                    
+                    selected_ids = st.multiselect(
+                        "Seleccione las facturas a entregar:",
+                        options=options_ids,
+                        default=default_ids,
+                        key=f"multiselect_lote_{selected_lote}"
+                    )
+                    
+                    submitted = st.form_submit_button(f"🚚 Entregar Lote {selected_lote}")
+                
+                    if submitted and selected_ids:
+                        fecha_entrega = datetime.now()
+                        # Usar tu función existente
+                        entregadas_count = db_ops.actualizar_entrega_masiva_radicador(selected_ids, fecha_entrega)
+                        
+                        if entregadas_count > 0:
+                            st.success(f"✅ {entregadas_count} facturas del lote {selected_lote} entregadas correctamente.")
+                            invalidate_all_caches()
+                            # Limpiar caché específica
+                            if cache_key in st.session_state:
+                                del st.session_state[cache_key]
+                            st.rerun()
+                        else:
+                            st.error("❌ No se pudieron entregar las facturas.")
                 else:
-                    st.session_state['entrega_masiva_status'] = "⚠️ No se pudieron marcar facturas como entregadas."
-                
-                invalidate_all_caches()
-                # Limpiar caché específica para forzar la recarga de datos
-                if cache_key in st.session_state:
-                    del st.session_state[cache_key]
-
-    # Muestra el mensaje de éxito/fracaso fuera del formulario para evitar el UnboundLocalError
-    if 'entrega_masiva_status' in st.session_state:
-        st.info(st.session_state['entrega_masiva_status'])
-        del st.session_state['entrega_masiva_status']
-        st.rerun() # Fuerza una re-ejecución final para limpiar el mensaje.
+                    st.info(f"No hay facturas listas para radicar en el lote {selected_lote}.")
+        else:
+            st.info("No se encontraron lotes con facturas listas para radicar.")
 
     # --- Botones de Acción General ---
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
     with col_export:
         if st.button("Exportar a CSV"):
-            # --- NUEVA SOLUCIÓN: Generar y descargar el CSV directamente aquí ---
             try:
-                # Asegúrate de tener este import al inicio del archivo
                 csv = df_facturas.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Descargar CSV",
@@ -874,7 +906,6 @@ def display_invoice_table(user_role):
                     st.rerun()
                     
             with col_refacturar:
-                # Verificar contra el dataset completo, no solo la página
                 if selected_invoice_id in df_facturas['ID'].values:
                     dias_restantes_df = df_facturas[df_facturas['ID'] == selected_invoice_id]['Días Restantes'].iloc[0]
                     if dias_restantes_df == "Refacturar":
@@ -956,7 +987,6 @@ def display_invoice_table(user_role):
                                 st.success(f"Factura ID: {selected_invoice_id} eliminada correctamente.")
                                 st.session_state.confirm_delete_id = None
                                 invalidate_all_caches()
-                                # Limpiar caché específica
                                 if cache_key in st.session_state:
                                     del st.session_state[cache_key]
                                 cancelar_edicion_action()
