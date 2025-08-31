@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime, timedelta, date
 from backend import database_operations as db_ops
+from backend.database_operations import generar_siguiente_id_lote
 import pandas as pd
 import sys
 import os
@@ -16,6 +17,7 @@ import numpy as np
 
 st.set_page_config(layout="wide")
 db_ops.crear_tablas()
+db_ops.reparar_secuencia_ids()
 
 if not os.path.exists('data'):
     os.makedirs('data')
@@ -47,8 +49,6 @@ def initialize_session_state():
         st.session_state.bulk_eps_key = 0
     if 'bulk_area_servicio_key' not in st.session_state:
         st.session_state.bulk_area_servicio_key = 0
-    if 'contador_lotes' not in st.session_state:
-        st.session_state.contador_lotes = 1
 
 initialize_session_state()
 
@@ -87,7 +87,7 @@ def get_selectbox_default_index(options_list, current_value):
 def _process_factura_for_display_df(df_raw):
     if df_raw is None or len(df_raw) == 0:
         return pd.DataFrame(columns=[
-            'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',  # ← Agregué 'Lote'
+            'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
             'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
             'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
             'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
@@ -100,51 +100,67 @@ def _process_factura_for_display_df(df_raw):
 
     hoy = pd.Timestamp('today').normalize()
 
-    # Convertir columnas a datetime de manera vectorizada
     date_columns = ['fecha_generacion', 'fecha_reemplazo', 'fecha_hora_entrega', 'fecha_entrega_radicador', 'fecha_gen_original_linked']
     for col in date_columns:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.normalize() # Usamos normalize() para quedarnos solo con la fecha
+            df[col] = pd.to_datetime(df[col], errors='coerce').dt.normalize()
 
-    # Calcular fecha base
     df['fecha_base_calculo'] = df['fecha_reemplazo'].combine_first(df['fecha_generacion'])
 
-    # Calcular fecha límite (vectorizado)
     df['fecha_limite_liquidacion_obj'] = df['fecha_base_calculo'].apply(
         lambda x: sumar_dias_habiles(x, 21) if not pd.isnull(x) else None
     )
 
-    # Calcular días restantes (vectorizado donde sea posible, pero necesita apply por la función personalizada)
+    # ===== ¡¡CORRECCIÓN DE EMERGENCIA!! =====
     def calcular_dias_para_fila(fecha_limite):
         if pd.isnull(fecha_limite):
             return None
-        dias = calcular_dias_habiles_entre_fechas(hoy, fecha_limite)
-        if fecha_limite < hoy:
-            return dias * -1
-        return dias
+        
+        # DEBUG: Verificar fechas
+        print(f"DEBUG: fecha_limite={fecha_limite}, hoy={hoy}")
+        
+        # Convertir a date para el cálculo correcto
+        try:
+            fecha_limite_date = fecha_limite.date() if hasattr(fecha_limite, 'date') else fecha_limite
+            hoy_date = hoy.date()
+            
+            dias = calcular_dias_habiles_entre_fechas(hoy_date, fecha_limite_date)
+            
+            # VERIFICAR SI YA VENCIÓ
+            if fecha_limite_date < hoy_date:
+                return -abs(dias)  # Forzar negativo
+            return dias
+            
+        except Exception as e:
+            print(f"ERROR en cálculo: {e}")
+            return None
 
     df['Días Restantes'] = df['fecha_limite_liquidacion_obj'].apply(calcular_dias_para_fila)
 
-    # Asignar etiquetas "Refacturar" y "Hoy Vence" (vectorizado)
+    # ===== CONDICIONES CORREGIDAS =====
     cond_vencidas = (
-        (df['Días Restantes'] < 0) &
-        (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
-        (df['estado'] != 'Reemplazada')
+        (df['Días Restantes'] < 0) |  # Cualquier valor negativo
+        (df['Días Restantes'].astype(str).str.contains('Refacturar', na=False))  # Incluir textos existentes
     )
-    cond_hoy_vence = (
-        (df['Días Restantes'] == 0) &
-        (~df['estado_auditoria'].isin(['Devuelta por Auditor', 'Corregida por Legalizador', 'En Radicador', 'Radicada y Aceptada'])) &
-        (df['estado'] != 'Reemplazada')
-    )
+    
+    cond_hoy_vence = (df['Días Restantes'] == 0)
+    
+    # APLICAR "Refacturar" y "Hoy Vence"
     df.loc[cond_vencidas, 'Días Restantes'] = "Refacturar"
     df.loc[cond_hoy_vence, 'Días Restantes'] = "Hoy Vence"
+    
+    # FORZAR ESTADO "Vencidas" para facturas vencidas
+    cond_estado_vencidas = (df['Días Restantes'].isin(["Refacturar", "Hoy Vence"]))
+    df.loc[cond_estado_vencidas, 'Estado'] = "Vencidas"
+    # ===== FIN CORRECCIÓN =====
 
-    # Lógica de reemplazo (vectorizada con np.where)
+    # ... (el resto de tu código se mantiene IGUAL) ...
     df['Número de Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['num_fact_original_linked'],
         df['numero_factura']
     )
+    
     df['Número Reemplazo Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['numero_factura'],
@@ -154,11 +170,13 @@ def _process_factura_for_display_df(df_raw):
             ""
         )
     )
+    
     df['Fecha Generación'] = np.where(
         df['factura_original_id'].notnull(),
         df['fecha_gen_original_linked'],
         df['fecha_generacion']
     )
+    
     df['Fecha Reemplazo Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['fecha_generacion'].dt.strftime('%Y-%m-%d'),
@@ -168,24 +186,21 @@ def _process_factura_for_display_df(df_raw):
             ""
         )
     )
+    
     df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
+    
+    # Asegurar que las vencidas mantengan su estado
+    df.loc[cond_estado_vencidas, 'Estado'] = "Vencidas"
 
-    # Aplicar estado "Vencidas" (vectorizado)
-    cond_estado_vencidas = (df['Días Restantes'].isin(["Refacturar", "Hoy Vence"]))
-    df['Estado'] = np.where(cond_estado_vencidas, "Vencidas", df['Estado'])
-
-    # Formatear fechas para visualización (vectorizado)
     df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
     df['Fecha de Entrega'] = df['fecha_hora_entrega'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
     df['Fecha Entrega Radicador'] = df['fecha_entrega_radicador'].dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
 
-    # AGREGAR COLUMNA DE LOTE (NUEVO)
     if 'lote_carga_masiva' in df.columns:
         df['Lote'] = df['lote_carga_masiva']
     else:
-        df['Lote'] = None  # Si no existe la columna, llenar con None
+        df['Lote'] = None
 
-    # Renombrar columnas
     df = df.rename(columns={
         'id': 'ID',
         'area_servicio': 'Área de Servicio',
@@ -196,18 +211,16 @@ def _process_factura_for_display_df(df_raw):
         'observacion_auditor': 'Observación Auditor'
     })
 
-    # Seleccionar y ordenar columnas finales (AGREGAR 'Lote')
     columnas_finales = [
-        'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',  # ← 'Lote' agregado
+        'ID', 'Lote', 'Área de Servicio', 'Facturador', 'EPS', 'Número de Factura',
         'Número Reemplazo Factura', 'Fecha Generación', 'Fecha Reemplazo Factura',
         'Fecha de Entrega', 'Días Restantes', 'Estado', 'Estado Auditoria',
         'Tipo de Error', 'Observación Auditor', 'Fecha Entrega Radicador'
     ]
-    
-    # Asegurarse de que todas las columnas existan en el DataFrame
+
     for col in columnas_finales:
         if col not in df.columns:
-            df[col] = None  # o '' dependiendo del tipo de dato
+            df[col] = None
 
     return df[columnas_finales]
 
@@ -242,7 +255,6 @@ def main_app_page():
         st.session_state.user_role = None
         st.rerun()
 
-    # --- MODIFICA ESTA LÍNEA: Agrega la nueva pestaña "Auditoría por Lotes" ---
     tab1, tab2, tab3, tab4 = st.tabs(["Ingreso Individual", "Carga Masiva", "Estadísticas", "Auditoría por Lotes"]) # <-- Nueva pestaña
 
     with tab1:
@@ -254,10 +266,10 @@ def main_app_page():
     with tab3:
         st.header("Estadísticas por Legalizador y EPS")
         display_statistics()
-    with tab4:  # <-- Contenido de la nueva pestaña
+    with tab4:
         st.header("Auditoría Masiva por Lotes")
-        if user_role == 'auditor':  # Solo los auditores pueden ver esta pestaña
-            display_batch_audit_section()  # <-- Nueva función que crearemos
+        if user_role == 'auditor':
+            display_batch_audit_section()
         else:
             st.warning("⛔ Solo los usuarios con rol 'Auditor' pueden acceder a esta función.")
 
@@ -339,18 +351,13 @@ def display_invoice_entry_form(user_role):
                     st.error("Error: No se pudo recuperar la factura original para actualizar.")
             else:
                 result = guardar_factura_action(facturador, eps, numero_factura, fecha_generacion, area_servicio)
-            
-            # Guardar el resultado para mostrar el botón FUERA del form
             if result and 'reporte_data' in result:
                 st.session_state.reporte_individual_data = result['reporte_data']
-            
             st.rerun()
 
-    # --- NUEVO: MOSTRAR BOTÓN DE DESCARGA FUERA DEL FORM ---
     if 'reporte_individual_data' in st.session_state and st.session_state.reporte_individual_data:
         datos_reporte = st.session_state.reporte_individual_data
-        
-        # Generar el reporte HTML
+
         from utils.io_utils import generar_reporte_carga_individual
         reporte_html = generar_reporte_carga_individual(
             facturador=datos_reporte['facturador'],
@@ -359,10 +366,7 @@ def display_invoice_entry_form(user_role):
             factura_data=datos_reporte['factura_data'],
             fecha_hora_carga=datetime.now()
         )
-        
         st.success("✅ Factura guardada correctamente. Descarga tu relación:")
-        
-        # Mostrar botón de descarga (FUERA del form)
         st.download_button(
             label="📄 Imprimir Relación de Carga Individual",
             data=reporte_html,
@@ -370,20 +374,17 @@ def display_invoice_entry_form(user_role):
             mime="text/html",
             key=f"download_individual_{datos_reporte['factura_id']}"
         )
-        
-        # Botón para limpiar
+
         if st.button("Cerrar Reporte"):
             del st.session_state.reporte_individual_data
             st.rerun()
 
 def display_bulk_load_section():
-    # --- Variables para guardar el estado del reporte ---
     if 'reporte_generado' not in st.session_state:
         st.session_state.reporte_generado = None
     if 'mostrar_reporte' not in st.session_state:
         st.session_state.mostrar_reporte = False
 
-    # --- Formulario de Carga Masiva ---
     with st.form("bulk_load_form"):
         st.write("Por favor, selecciona el Legalizador, EPS y Área de Servicio para todas las facturas del CSV.")
         facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES, key=f"bulk_facturador_selector_{st.session_state.bulk_facturador_key}")
@@ -397,12 +398,10 @@ def display_bulk_load_section():
             if not facturador_bulk or not eps_bulk or not area_servicio_bulk:
                 st.error("Por favor, selecciona Legalizador, EPS y Área de Servicio para la carga masiva.")
                 return
-            
-            # --- Capturar metadatos para el reporte ---
+
             from datetime import datetime
-            fecha_hora_carga = datetime.now()  # Fecha/hora exacta de carga
-            numero_lote = f"LOTE_{st.session_state.contador_lotes:03d}"
-            st.session_state.contador_lotes += 1
+            fecha_hora_carga = datetime.now()
+            numero_lote = generar_siguiente_id_lote()
             st.info(f"**Número de Lote para esta carga:** `{numero_lote}`")
 
             inserted_count, skipped_count, total_rows = 0, 0, 0
@@ -414,13 +413,11 @@ def display_bulk_load_section():
 
             st.write(f"Iniciando carga masiva desde: {uploaded_file.name}")
             st.write(f"Facturador global: {facturador_bulk}, EPS global: {eps_bulk}, Área de Servicio global: {area_servicio_bulk}")
-            
-            # Guardar el DataFrame original para el reporte
+
             df_original_para_reporte = df.copy()
-            
-            # --- NUEVO: Lista para almacenar los IDs de las facturas creadas ---
+
             ids_facturas_creadas = []
-            
+
             for index, row in df.iterrows():
                 total_rows += 1
                 numero_factura_csv = str(row['Numero de Factura']).strip()
@@ -429,7 +426,7 @@ def display_bulk_load_section():
                     st.warning(f"Fila {index+2}: Número de factura '{numero_factura_csv}' no es numérico. Saltando.")
                     skipped_count += 1
                     continue
-                
+
                 factura_existente = db_ops.obtener_factura_por_numero(numero_factura_csv)
                 if factura_existente:
                     st.info(f"Fila {index+2}: Factura '{numero_factura_csv}' ya existe. Saltando para evitar duplicados.")
@@ -447,34 +444,38 @@ def display_bulk_load_section():
                     estado_auditoria_automatico_masivo = "Lista para Radicar"
                 else:
                     estado_auditoria_automatico_masivo = "Pendiente"
-                
-                factura_id = db_ops.guardar_factura(
-                    numero_factura=numero_factura_csv,
-                    area_servicio=area_servicio_bulk,
-                    facturador=facturador_bulk,
-                    fecha_generacion=fecha_generacion_db,
-                    eps=eps_bulk,
-                    fecha_hora_entrega=fecha_hora_entrega_db,
-                    estado_auditoria=estado_auditoria_automatico_masivo,
-                    lote_carga_masiva=numero_lote
-                )
 
-                if factura_id:
-                    # --- NUEVO: Guardar el ID en la lista ---
-                    ids_facturas_creadas.append(factura_id)
-                    
-                    if area_servicio_bulk == "SOAT":
-                        db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
-                    inserted_count += 1
-                else:
+                # === NUEVO CÓDIGO CON INDENTACIÓN CORRECTA ===
+                try:
+                    factura_id = db_ops.guardar_factura(
+                        numero_factura=numero_factura_csv,
+                        area_servicio=area_servicio_bulk,
+                        facturador=facturador_bulk,
+                        fecha_generacion=fecha_generacion_db,
+                        eps=eps_bulk,
+                        fecha_hora_entrega=fecha_hora_entrega_db,
+                        estado_auditoria=estado_auditoria_automatico_masivo,
+                        lote_carga_masiva=numero_lote
+                    )
+
+                    if factura_id:
+                        ids_facturas_creadas.append(factura_id)
+                        if area_servicio_bulk == "SOAT":
+                            db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
+                        inserted_count += 1
+                    else:
+                        skipped_count += 1
+                        st.error(f"Fila {index+2}: Error desconocido al insertar la factura '{numero_factura_csv}'. Saltando.")
+
+                except Exception as e:
                     skipped_count += 1
-                    st.warning(f"Fila {index+2}: Error al insertar la factura '{numero_factura_csv}'. Saltando.")
+                    st.error(f"❌ Fila {index+2}: Error AL INSERTAR la factura **'{numero_factura_csv}'**. Motivo: `{e}`")
+                    continue
+                # === FIN NUEVO CÓDIGO ===
 
-            # --- GUARDAR datos para el reporte ---
             if inserted_count > 0:
                 st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
-                
-                # Guardar datos en session_state para mostrar el reporte FUERA del form
+
                 st.session_state.reporte_generado = {
                     'numero_lote': numero_lote,
                     'facturador': facturador_bulk,
@@ -483,20 +484,18 @@ def display_bulk_load_section():
                     'dataframe': df_original_para_reporte,
                     'fecha_hora_carga': fecha_hora_carga,
                     'inserted_count': inserted_count,
-                    'ids_facturas': ids_facturas_creadas  # <--- NUEVO: Guardar los IDs
+                    'ids_facturas': ids_facturas_creadas
                 }
                 st.session_state.mostrar_reporte = True
-                
             else:
                 st.warning("No se insertaron facturas. No se generará reporte.")
-            
+
             invalidate_all_caches()
             st.session_state.bulk_facturador_key += 1
             st.session_state.bulk_eps_key += 1
             st.session_state.bulk_area_servicio_key += 1
             st.rerun()
 
-    # --- SECCIÓN SEPARADA para el reporte (FUERA del form) ---
     if st.session_state.mostrar_reporte and st.session_state.reporte_generado:
         datos_reporte = st.session_state.reporte_generado
         try:
@@ -507,9 +506,8 @@ def display_bulk_load_section():
                 area_servicio=datos_reporte['area_servicio'],
                 dataframe_facturas=datos_reporte['dataframe'],
                 fecha_hora_carga=datos_reporte['fecha_hora_carga'],
-                ids_facturas=datos_reporte['ids_facturas']  # <--- NUEVO: Pasar los IDs
+                ids_facturas=datos_reporte['ids_facturas']
             )
-            
             st.success("✅ Carga masiva completada. Descarga tu relación de carga:")
             st.download_button(
                 label="📄 Imprimir Relación de Carga",
@@ -518,8 +516,7 @@ def display_bulk_load_section():
                 mime="text/html",
                 key=f"download_reporte_{datos_reporte['numero_lote']}"
             )
-            
-            # Botón para limpiar y volver a empezar
+
             if st.button("🏁 Realizar nueva carga"):
                 st.session_state.mostrar_reporte = False
                 st.session_state.reporte_generado = None
@@ -530,52 +527,45 @@ def display_bulk_load_section():
 
 def display_batch_audit_section():
     st.subheader("Seleccionar Lote para Auditar")
-    
-    # Primero, obtener todos los números de lote únicos de la BD
+
     try:
         lotes = db_ops.obtener_lotes_unicos()
     except Exception as e:
         st.error(f"Error al cargar los lotes: {e}")
         lotes = []
-    
+
     if not lotes:
         st.info("No hay lotes de carga masiva registrados en el sistema.")
         return
-        
+
     lote_seleccionado = st.selectbox("Seleccione el Número de Lote a Auditar:", options=[""] + lotes)
-    
+
     if lote_seleccionado:
-        # Cargar TODAS las facturas de ese lote
         try:
             facturas_del_lote = db_ops.cargar_facturas_por_lote(lote_seleccionado)
         except Exception as e:
             st.error(f"Error al cargar las facturas del lote: {e}")
             return
-            
+
         df_lote = _process_factura_for_display_df(facturas_del_lote)
-        
+
         if not df_lote.empty:
             st.success(f"📦 Mostrando {len(df_lote)} facturas del lote: `{lote_seleccionado}`")
-            
-            # --- DEBUGGING - MOSTRAR ESTADOS ---
+
             st.write("**🔍 Debug: Estados de Auditoría en este lote:**")
             conteo_estados = df_lote['Estado Auditoria'].value_counts()
             st.dataframe(conteo_estados.rename('Cantidad de Facturas'))
             
             with st.expander("Ver detalle completo de facturas en el lote"):
                 st.dataframe(df_lote[['ID', 'Número de Factura', 'Estado Auditoria']])
-            # --- FIN DEBUGGING ---
-            
+
             st.dataframe(df_lote.style.apply(highlight_rows, axis=1), use_container_width=True, hide_index=True)
-            
-            # --- ACCIONES MASIVAS PARA EL AUDITOR ---
+
             st.markdown("---")
             st.subheader("Acciones de Auditoría Masiva")
-            
-            # Crear una lista de IDs para seleccionar
+
             ids_facturas = df_lote['ID'].tolist()
-            
-            # --- SELECTORES QUE SE BLOQUEAN ENTRE SÍ ---
+
             st.write("**✅ Seleccione las facturas CORRECTAS para marcar como 'Lista para Radicar':**")
             facturas_para_aprobar = st.multiselect(
                 "Facturas a Aprobar:",
@@ -583,7 +573,7 @@ def display_batch_audit_section():
                 format_func=lambda x: f"ID {x} - {df_lote[df_lote['ID']==x]['Número de Factura'].iloc[0]}",
                 key="ms_aprobar"
             )
-            
+
             st.write("**❌ Seleccione las facturas con ERRORES para marcar como 'Devuelta por Auditor':**")
             facturas_para_devolver = st.multiselect(
                 "Facturas a Devolver:",
@@ -591,26 +581,22 @@ def display_batch_audit_section():
                 format_func=lambda x: f"ID {x} - {df_lote[df_lote['ID']==x]['Número de Factura'].iloc[0]}",
                 key="ms_devolver"
             )
-            # --- DEBUG TEMPORAL ---
+
             st.write(f"Facturas seleccionadas para devolver: {facturas_para_devolver}")
             st.write(f"Longitud de facturas_para_devolver: {len(facturas_para_devolver)}")
-            # --- FIN DEBUG ---            
 
-            # --- NUEVO: DEVOLUCIÓN INDIVIDUAL POR FACTURA ---
             observaciones_individuales = {}
             tipos_error_individuales = {}
-            
+
             if facturas_para_devolver:
                 st.markdown("---")
                 st.write("**📝 Especificar motivo de devolución por factura:**")
-                
+
                 for factura_id in facturas_para_devolver:
-                    # Obtener info de la factura para mostrar en el expander
                     factura_info = df_lote[df_lote['ID'] == factura_id].iloc[0]
                     with st.expander(f"🚨 Factura ID: {factura_id} - {factura_info['Número de Factura']}", expanded=False):
                         col1, col2 = st.columns(2)
                         with col1:
-                            # USAR TUS CONSTANTES EXISTENTES (excluyendo la opción vacía "")
                             tipos_error_individuales[factura_id] = st.selectbox(
                                 "Tipo de Error:",
                                 options=TIPO_ERROR_OPCIONES[1:],
@@ -623,29 +609,22 @@ def display_batch_audit_section():
                                 placeholder="Describa el error específico de esta factura...",
                                 key=f"obs_individual_{factura_id}"
                             )
-            # --- FIN NUEVO ---
-            
-            # Botón para APLICAR los cambios MASIVOS
+
             if st.button("🔥 Aplicar Auditoría Masiva", type="primary", use_container_width=True):
                 if facturas_para_aprobar or facturas_para_devolver:
-                    # Aprobar las seleccionadas
                     if facturas_para_aprobar:
                         for fid in facturas_para_aprobar:
                             db_ops.actualizar_estado_auditoria_factura(fid, "Lista para Radicar", None, None)
                         st.success(f"✅ {len(facturas_para_aprobar)} facturas aprobadas.")
-                    
-                    # Devolver las seleccionadas CON OBSERVACIONES INDIVIDUALES
+
                     if facturas_para_devolver:
                         devueltas_exitosas = 0
                         for fid in facturas_para_devolver:
-                            # Validar que seleccionó un tipo de error
                             if not tipos_error_individuales.get(fid):
                                 st.error(f"Debe seleccionar un tipo de error para la factura ID: {fid}")
                                 continue
-                            
-                            # Usar observación individual o una por defecto
+
                             observacion = observaciones_individuales.get(fid) or "Revisión masiva - Error detectado"
-                            
                             success = db_ops.actualizar_estado_auditoria_factura(
                                 fid, 
                                 "Devuelta por Auditor", 
@@ -654,9 +633,7 @@ def display_batch_audit_section():
                             )
                             if success:
                                 devueltas_exitosas += 1
-                        
                         st.success(f"❌ {devueltas_exitosas} facturas devueltas.")
-                    
                     st.balloons()
                     invalidate_all_caches()
                     st.rerun()
@@ -674,7 +651,7 @@ def display_statistics():
     total_errores = stats_data["total_errores"]
     total_general = stats_data["total_general"]
     df_stats = pd.DataFrame(stats_data["stats_por_legalizador_eps"], columns=["Legalizador", "EPS", "Facturas Pendientes"])
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(label="Facturas Pendientes", value=total_pendientes)
@@ -687,7 +664,6 @@ def display_statistics():
         processed_facturas_df = _process_factura_for_display_df(facturas_raw_for_vencidas)
         total_vencidas = (processed_facturas_df["Días Restantes"] == "Refacturar").sum()
         st.metric(label="Facturas Vencidas (Refacturar)", value=total_vencidas)
-    
     st.metric(label="Total General de Facturas", value=total_general)
     st.markdown("---")
     st.subheader("Conteo por Legalizador y EPS (Facturas Pendientes)")
@@ -730,7 +706,6 @@ def highlight_rows(row):
     return styles_list
 
 def display_invoice_table(user_role):
-    # --- Widgets de Búsqueda ---
     col_search, col_criteria = st.columns([3, 2])
     with col_search:
         search_term_input = st.text_input("Buscar:", value="", key=f"search_input_widget_{st.session_state.filter_text_key}")
@@ -738,7 +713,6 @@ def display_invoice_table(user_role):
         options_criteria = ["Numero de Factura", "Legalizador", "EPS", "Area de Servicio", "Estado Auditoria"]
         search_criterion_selectbox = st.selectbox("Buscar por:", options=options_criteria, index=0, key=f"search_criteria_widget_{st.session_state.filter_select_key}")
 
-    # --- Lógica de Búsqueda y Caché ---
     current_search_term = st.session_state.get(f'search_input_widget_{st.session_state.filter_text_key}', '').strip()
     current_search_criterion = st.session_state.get(f'search_criteria_widget_{st.session_state.filter_select_key}', 'Numero de Factura')
     db_column_name = {
@@ -749,11 +723,9 @@ def display_invoice_table(user_role):
         "Estado Auditoria": "estado_auditoria"
     }.get(current_search_criterion)
 
-    # Clave única para la caché basada en la búsqueda
     cache_key = f"df_cache_{current_search_term}_{db_column_name}"
     current_search_tuple = (current_search_term, db_column_name)
 
-    # Solo cargar datos si la búsqueda cambió
     if (cache_key not in st.session_state or
         st.session_state.get('last_search_tuple') != current_search_tuple):
         
@@ -765,24 +737,20 @@ def display_invoice_table(user_role):
 
     df_facturas = st.session_state[cache_key]
 
-    # --- Configuración de Paginación ---
     rows_per_page = 15
     total_rows = len(df_facturas)
     total_pages = max(1, (total_rows + rows_per_page - 1) // rows_per_page)
 
-    # Inicializar/validar página actual
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 0
     else:
         st.session_state.current_page = max(0, min(st.session_state.current_page, total_pages - 1))
 
-    # --- Mostrar Tabla Paginada ---
     if not df_facturas.empty:
         start_idx = st.session_state.current_page * rows_per_page
         end_idx = min(start_idx + rows_per_page, total_rows)
         df_page = df_facturas.iloc[start_idx:end_idx].copy()
 
-        # Ordenar solo la página actual (mucho más rápido)
         df_page['sort_key'] = df_page.apply(
             lambda row: 1 if row["Estado Auditoria"] == 'Devuelta por Auditor'
             else 2 if row["Estado Auditoria"] == 'Corregida por Legalizador'
@@ -792,11 +760,9 @@ def display_invoice_table(user_role):
         df_page = df_page.sort_values(by=['sort_key', 'Fecha Generación'], ascending=[True, False])
         df_page = df_page.drop(columns=['sort_key'])
 
-        # Mostrar solo la página actual
         st.dataframe(df_page.style.apply(highlight_rows, axis=1),
                      use_container_width=True, hide_index=True)
 
-        # --- Controles de Paginación ---
         col_prev, col_page_info, col_next = st.columns([1, 3, 1])
         with col_prev:
             if st.button("⏪ Anterior", disabled=(st.session_state.current_page == 0)):
@@ -813,8 +779,7 @@ def display_invoice_table(user_role):
 
     if not df_facturas.empty and user_role == 'auditor':
         st.markdown("### 📦 Entrega Masiva al Radicador")
-        
-        # Facturas listas para radicar (TODO lo que estaba listo antes)
+
         selectable_ids = df_facturas.loc[
             (df_facturas['Estado Auditoria'].isin(['Lista para Radicar', 'En Radicador'])) &
             (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
@@ -842,7 +807,6 @@ def display_invoice_table(user_role):
                     if entregadas_count > 0:
                         st.success(f"✅ {entregadas_count} facturas entregadas al radicador!")
                         invalidate_all_caches()
-                        # Limpiar caché específica
                         if cache_key in st.session_state:
                             del st.session_state[cache_key]
                         st.rerun()
@@ -851,7 +815,6 @@ def display_invoice_table(user_role):
         else:
             st.info("No hay facturas listas para radicar en este momento.")
 
-    # --- Botones de Acción General ---
     col_export, col_edit, col_refacturar, col_delete_placeholder = st.columns(4)
     with col_export:
         if st.button("Exportar a CSV"):
@@ -879,6 +842,7 @@ def display_invoice_table(user_role):
                 # Generar CSV
                 csv = df_compatible.to_csv(index=False).encode('utf-8')
                 # ===== FIN NUEVO =====
+                
                 st.download_button(
                     label="📥 Descargar CSV",
                     data=csv,
@@ -889,13 +853,11 @@ def display_invoice_table(user_role):
             except Exception as e:
                 st.error(f"Error al generar el CSV: {e}")
 
-    # --- Input de ID para Acciones - FUERA de la paginación ---
     selected_invoice_id = st.number_input("ID de Factura para Acción:",
                                          min_value=0,
                                          step=1,
                                          key=f"selected_invoice_id_input_{st.session_state.selected_invoice_input_key}")
 
-    # --- Lógica de Acciones para la Factura Seleccionada ---
     if selected_invoice_id > 0:
         factura_data_for_action = db_ops.obtener_factura_por_id(selected_invoice_id)
         if factura_data_for_action:
@@ -914,11 +876,10 @@ def display_invoice_table(user_role):
                             cargar_factura_para_refacturar_action(selected_invoice_id)
                             st.rerun()
 
-            # --- Acciones de Auditoría ---
             if user_role == 'auditor':
                 st.markdown("---")
                 st.subheader("Acciones de Auditoría para Factura Seleccionada")
-                
+
                 estado_auditoria_default_index = 0
                 if st.session_state.current_invoice_data['estado_auditoria']:
                     try: 
@@ -926,7 +887,7 @@ def display_invoice_table(user_role):
                             st.session_state.current_invoice_data['estado_auditoria'])
                     except ValueError: 
                         estado_auditoria_default_index = 0
-                
+
                 tipo_error_default_index = 0
                 if st.session_state.current_invoice_data['tipo_error']:
                     try: 
@@ -934,7 +895,7 @@ def display_invoice_table(user_role):
                             st.session_state.current_invoice_data['tipo_error'])
                     except ValueError: 
                         tipo_error_default_index = 0
-                
+
                 with st.form(key=f"auditoria_form_{selected_invoice_id}", clear_on_submit=False):
                     estado_auditoria_options_filtered = [opt for opt in ESTADO_AUDITORIA_OPCIONES
                                                          if opt != 'Radicada y Aceptada']
@@ -942,23 +903,22 @@ def display_invoice_table(user_role):
                                                           options=estado_auditoria_options_filtered,
                                                           index=estado_auditoria_default_index,
                                                           key=f"estado_auditoria_{selected_invoice_id}")
-                    
+
                     tipo_error_input = st.selectbox("Tipo de Error:",
                                                     options=TIPO_ERROR_OPCIONES,
                                                     index=tipo_error_default_index,
                                                     key=f"tipo_error_{selected_invoice_id}")
-                    
+
                     observacion_auditor_input = st.text_area("Observación Auditor:",
                                                             value=st.session_state.current_invoice_data['observacion_auditor'] or "",
                                                             key=f"observacion_auditor_{selected_invoice_id}")
-                    
+
                     submit_auditoria = st.form_submit_button("Auditar Factura")
                     if submit_auditoria:
                         auditar_factura_action(selected_invoice_id, estado_auditoria_input,
                                                observacion_auditor_input, tipo_error_input)
                         st.rerun()
-                
-                # Checkbox para entrega al radicador
+
                 if factura_data_for_action['estado_auditoria'] in ['Lista para Radicar', 'En Radicador']:
                     fecha_entrega_radicador_val = factura_data_for_action['fecha_entrega_radicador']
                     fecha_entrega_radicador_checked = st.checkbox(
@@ -970,12 +930,10 @@ def display_invoice_table(user_role):
                         actualizar_fecha_entrega_radicador_action(selected_invoice_id,
                                                                  fecha_entrega_radicador_checked)
                         st.rerun()
-                
-                # Botón de eliminar
+
                 if st.button("Eliminar Factura", key=f"delete_button_{selected_invoice_id}"):
                     st.session_state.confirm_delete_id = selected_invoice_id
-                
-                # Confirmación de eliminación
+
                 if ('confirm_delete_id' in st.session_state and
                     st.session_state.confirm_delete_id == selected_invoice_id):
                     
@@ -1028,12 +986,10 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     fecha_generacion_db = fecha_generacion_obj
     fecha_hora_entrega = datetime.now()
 
-    # --- NUEVA LÓGICA: Determinar estado de auditoría automático ---
     if area_servicio in ["Hospitalizacion", "Urgencias"]:
         estado_auditoria_automatico = "Lista para Radicar"
     else:
         estado_auditoria_automatico = "Pendiente"
-    # --- FIN NUEVA LÓGICA ---
 
     factura_id = db_ops.guardar_factura(
         numero_factura=numero_factura,
@@ -1048,12 +1004,8 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
     if factura_id:
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)
-        
-        # Obtener los datos completos de la factura recién guardada
         factura_data = db_ops.obtener_factura_por_id(factura_id)
-        
         if factura_data:
-            # Preparar datos para el reporte (PERO NO crear el botón aquí)
             reporte_data = {
                 'facturador': facturador,
                 'eps': eps,
@@ -1062,12 +1014,11 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
                 'numero_factura': numero_factura,
                 'factura_id': factura_id
             }
-            
+
             st.success(f"Factura guardada correctamente. Estado: {estado_auditoria_automatico}")
             invalidate_all_caches()
             cancelar_edicion_action()
-            
-            # Retornar los datos para generar el botón FUERA del form
+
             return {'success': True, 'reporte_data': reporte_data}
         else:
             st.error("Error: No se pudieron obtener los datos de la factura guardada.")
@@ -1099,7 +1050,6 @@ def actualizar_factura_action(factura_id, numero_factura, area_servicio, factura
         reemplazada_por_numero_factura, estado_auditoria, observacion_auditor, tipo_error, fecha_reemplazo
     )
     if success:
-        # Obtener datos actualizados para el reporte
         factura_data = db_ops.obtener_factura_por_id(factura_id)
         
         if factura_data:
@@ -1180,7 +1130,7 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
     if not new_numero_factura.isdigit():
         st.error("El 'Nuevo Número de Factura' debe contener solo números.")
         return None
-    
+
     factura_existente = db_ops.obtener_factura_por_numero(new_numero_factura)
     if factura_existente:
         st.error(f"Error: El nuevo número de factura '{new_numero_factura}' ya existe en la base de datos. Por favor, ingrese un número diferente.")
@@ -1191,17 +1141,14 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
         return None
     if not validate_future_date(fecha_reemplazo_factura_obj, "Fecha de Generación de la Nueva Factura"): 
         return None
-    
+
     success = db_ops.guardar_factura_reemplazo(
         old_factura_id,
         new_numero_factura,
         fecha_reemplazo_factura_obj
     )
-    
     if success:
-        # Obtener datos de la factura reemplazada para el reporte
         factura_data = db_ops.obtener_factura_por_id(old_factura_id)
-        
         if factura_data:
             reporte_data = {
                 'facturador': facturador,
@@ -1212,7 +1159,6 @@ def guardar_factura_reemplazo_action(old_factura_id, new_numero_factura, fecha_r
                 'factura_id': old_factura_id,
                 'tipo': 'reemplazo'
             }
-            
             st.success(f"Factura ID: {old_factura_id} actualizada como reemplazada por {new_numero_factura} correctamente.")
             invalidate_all_caches()
             cancelar_edicion_action()

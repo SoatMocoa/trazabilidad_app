@@ -36,10 +36,8 @@ class DatabaseConnection:
         
         if self.conn and self.conn.closed != 0:
             logging.warning("Conexión en caché encontrada, pero está cerrada. Recreando la conexión.")
-            # Si la conexión está cerrada, borra la caché y obtiene una nueva.
             get_db_connection.clear()
             self.conn = get_db_connection()
-        
         return self.conn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -95,6 +93,7 @@ def crear_tablas():
                         tipo_error TEXT,
                         fecha_reemplazo DATE,
                         fecha_entrega_radicador TIMESTAMP,
+                        lote_carga_masiva TEXT,
                         FOREIGN KEY (factura_original_id) REFERENCES facturas(id),
                         CONSTRAINT unique_factura_details UNIQUE (numero_factura, facturador, eps, area_servicio)
                     );
@@ -107,7 +106,6 @@ def crear_tablas():
                         FOREIGN KEY (factura_id) REFERENCES facturas(id) ON DELETE CASCADE
                     );
                 """)
-                
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_numero_factura ON facturas (numero_factura);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_facturador ON facturas (facturador);")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_facturas_eps ON facturas (eps);")
@@ -131,27 +129,25 @@ def obtener_credenciales_usuario(username):
         logging.error(f"Error al obtener credenciales del usuario '{username}': {e}")
         return None
 
-# ENCUENTRA ESTA FUNCIÓN Y MODIFÍCALA
-# Cambia la definición de la función para aceptar los nuevos parámetros
-def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria="Pendiente", lote_carga_masiva=None):  # <-- Nuevos parámetros aquí
+def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria="Pendiente", lote_carga_masiva=None):
     try:
         with DatabaseConnection() as conn:
             if conn is None: return None
             with conn.cursor() as cursor:
-                # MODIFICA la consulta SQL para incluir los nuevos campos
                 cursor.execute("""
                     INSERT INTO facturas (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria, lote_carga_masiva)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
-                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria, lote_carga_masiva))  # <-- Añade los valores aquí
+                """, (numero_factura, area_servicio, facturador, fecha_generacion, eps, fecha_hora_entrega, estado_auditoria, lote_carga_masiva))
                 factura_id = cursor.fetchone()[0]
                 logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}. Estado: {estado_auditoria}, Lote: {lote_carga_masiva}")
                 return factura_id
     except errors.UniqueViolation as e:
+        # ¡AHORA LANZA LA EXCEPCIÓN en lugar de retornar None!
         logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
-        return None
+        raise e  # ← Esto propaga el error hacia arriba
     except Error as e:
         logging.error(f"Error al guardar factura '{numero_factura}': {e}")
-        return None
+        raise e  # ← Esto propaga el error hacia arriba
 
 def guardar_detalles_soat(factura_id, fecha_generacion_soat):
     try:
@@ -186,10 +182,8 @@ def obtener_factura_por_id(factura_id):
                     LEFT JOIN facturas fo ON f.factura_original_id = fo.id
                     WHERE f.id = %s;
                 """, (factura_id,))
-                
                 column_names = [desc[0] for desc in cursor.description]
                 factura_data_tuple = cursor.fetchone()
-                
                 if factura_data_tuple:
                     factura_data = dict(zip(column_names, factura_data_tuple))
                     logging.info(f"Factura ID: {factura_id} obtenida.")
@@ -198,7 +192,6 @@ def obtener_factura_por_id(factura_id):
     except Error as e:
         logging.error(f"Error al obtener factura por ID {factura_id}: {e}")
         return None
-
 
 def obtener_factura_por_numero(numero_factura):
     try:
@@ -215,10 +208,8 @@ def obtener_factura_por_numero(numero_factura):
                     FROM facturas
                     WHERE numero_factura = %s;
                 """, (numero_factura,))
-                
                 column_names = [desc[0] for desc in cursor.description]
                 factura_data_tuple = cursor.fetchone()
-                
                 if factura_data_tuple:
                     factura_data = dict(zip(column_names, factura_data_tuple))
                     logging.info(f"Factura con número: {numero_factura} obtenida.")
@@ -238,7 +229,6 @@ def obtener_detalles_soat_por_factura_id(factura_id):
                     FROM detalles_soat
                     WHERE factura_id = %s;
                 """, (factura_id,))
-                
                 column_names = [desc[0] for desc in cursor.description]
                 soat_details_tuple = cursor.fetchone()
 
@@ -305,17 +295,14 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
         with DatabaseConnection() as conn:
             if conn is None: return False
             with conn.cursor() as cursor:
-                cursor.execute("SELECT estado_auditoria FROM facturas WHERE id = %s;", (factura_id,))
-                current_estado = cursor.fetchone()[0]
-
-                new_estado_auditoria = current_estado
+                # Lógica MEJORADA: El estado cambia BASADO EN LA ACCIÓN (fecha_entrega), no en el estado anterior
                 if fecha_entrega is not None:
-                    if current_estado == 'Lista para Radicar':
-                        new_estado_auditoria = 'En Radicador'
+                    # Si se está ENTREGANDO (marcando el checkbox), cambiar a "En Radicador"
+                    new_estado_auditoria = "En Radicador"
                 else:
-                    if current_estado == 'En Radicador':
-                        new_estado_auditoria = 'Lista para Radicar'
-
+                    # Si se está QUITANDO la entrega (desmarcando el checkbox), volver a "Lista para Radicar"
+                    new_estado_auditoria = "Lista para Radicar"
+                
                 cursor.execute("""
                     UPDATE facturas SET fecha_entrega_radicador = %s, estado_auditoria = %s WHERE id = %s;
                 """, (fecha_entrega, new_estado_auditoria, factura_id))
@@ -379,7 +366,6 @@ def guardar_factura_reemplazo(old_factura_id, new_numero_factura, fecha_reemplaz
                         estado_auditoria = 'Pendiente'
                     WHERE id = %s;
                 """, (new_numero_factura, fecha_reemplazo, old_factura_id))
-                
                 logging.info(f"Factura ID: {old_factura_id} actualizada como reemplazada con el nuevo número: {new_numero_factura}.")
                 return True
     except errors.UniqueViolation as e:
@@ -411,13 +397,10 @@ def cargar_facturas(search_term=None, search_column=None):
                     query += f" WHERE f.{search_column} ILIKE %s"
                     params.append(f"%{search_term}%")
                 query += " ORDER BY f.id DESC;"
-                
                 cursor.execute(query, tuple(params))
-                
                 column_names = [desc[0] for desc in cursor.description]
                 facturas_raw = cursor.fetchall()
                 facturas = [dict(zip(column_names, row)) for row in facturas_raw]
-                
                 logging.info(f"Cargadas {len(facturas)} facturas.")
                 return facturas
     except Error as e:
@@ -554,7 +537,7 @@ def obtener_eps_unicas():
         return []
 
 def obtener_lotes_unicos():
-    """Obtiene lotes que tienen facturas que SÍ necesitan auditoría (excluye 'Lista para Radicar')"""
+    """Obtiene TODOS los lotes de carga masiva registrados (DEBUGGING)"""
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
@@ -563,23 +546,21 @@ def obtener_lotes_unicos():
                     SELECT DISTINCT lote_carga_masiva 
                     FROM facturas 
                     WHERE lote_carga_masiva IS NOT NULL
-                    AND estado_auditoria IN ('Pendiente', 'Devuelta por Auditor', 'Corregida por Legalizador')  -- ← EXCLUYE 'Lista para Radicar'
+                    -- REMUEVE el filtro por estado para ver TODO
                     ORDER BY lote_carga_masiva DESC;
                 """)
                 lotes = [row[0] for row in cursor.fetchall()]
-                logging.info(f"Lotes únicos con facturas pendientes obtenidos: {len(lotes)}")
+                logging.info(f"DEBUG - Todos los lotes obtenidos: {len(lotes)}")
                 return lotes
     except Error as e:
         logging.error(f"Error al obtener lotes únicos: {e}")
         return []
 
 def cargar_facturas_por_lote(numero_lote):
-    """Carga todas las facturas que pertenecen a un número de lote específico."""
     try:
         with DatabaseConnection() as conn:
             if conn is None: return []
             with conn.cursor() as cursor:
-                # Usamos la misma query que en cargar_facturas, pero filtrando por lote
                 query = """
                     SELECT
                         f.id, f.numero_factura, f.area_servicio, f.facturador, f.fecha_generacion, f.eps,
@@ -603,3 +584,49 @@ def cargar_facturas_por_lote(numero_lote):
     except Error as e:
         logging.error(f"Error al cargar facturas por lote '{numero_lote}': {e}")
         return []
+
+def obtener_ultimo_numero_lote():
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None:
+                return 0
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT MAX(CAST(
+                        REGEXP_REPLACE(lote_carga_masiva, '[^0-9]', '', 'g') AS INTEGER
+                    ))
+                    FROM facturas
+                    WHERE lote_carga_masiva IS NOT NULL 
+                    AND lote_carga_masiva ~ '[0-9]';  -- Solo filas que contengan al menos un dígito
+                """)
+                resultado = cursor.fetchone()[0]
+                ultimo_numero = resultado if resultado is not None else 0
+                logging.info(f"Último número de lote encontrado: {ultimo_numero}")
+                return ultimo_numero
+    except Error as e:
+        logging.error(f"Error al obtener el último número de lote: {e}")
+        return 0
+
+def generar_siguiente_id_lote():
+    ultimo_numero = obtener_ultimo_numero_lote()
+    siguiente_numero = ultimo_numero + 1
+    id_formateado = f"{siguiente_numero:03d}"
+    logging.info(f"Siguiente ID de lote generado: {id_formateado}")
+    return id_formateado
+
+def reparar_secuencia_ids():
+    """
+    Repara la secuencia de IDs automáticos para la tabla facturas.
+    Esto evita errores de 'duplicate key' en la columna id.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT setval(pg_get_serial_sequence('facturas', 'id'), 
+                    COALESCE(MAX(id), 0) + 1, false) FROM facturas;
+                """)
+                logging.info("Secuencia de IDs de la tabla facturas reparada.")
+    except Error as e:
+        logging.error(f"Error al reparar la secuencia de IDs: {e}")

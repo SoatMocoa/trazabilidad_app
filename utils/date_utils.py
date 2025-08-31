@@ -30,12 +30,14 @@ def es_dia_habil(fecha):
 
 def sumar_dias_habiles(fecha_inicio, dias):
     """Suma un número de días hábiles a una fecha dada."""
+    print(f"DEBUG sumar_dias_habiles: fecha_inicio={fecha_inicio}, dias={dias}")
     dias_sumados = 0
     fecha_actual = fecha_inicio
     while dias_sumados < dias:
         fecha_actual += timedelta(days=1)
         if es_dia_habil(fecha_actual):
             dias_sumados += 1
+    print(f"DEBUG: fecha_limite_calculada = {fecha_actual}")
     return fecha_actual
 
 def calcular_dias_habiles_entre_fechas(fecha_inicio, fecha_fin):
