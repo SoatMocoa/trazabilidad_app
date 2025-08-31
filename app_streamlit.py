@@ -856,7 +856,29 @@ def display_invoice_table(user_role):
     with col_export:
         if st.button("Exportar a CSV"):
             try:
-                csv = df_facturas.to_csv(index=False).encode('utf-8')
+                # ===== NUEVO: Exportación compatible =====
+                # Primero obtener los datos ORIGINALES de la BD (no el DataFrame procesado)
+                facturas_originales = get_cached_facturas("", "")  # Obtener datos crudos
+                
+                # Crear DataFrame solo con las columnas COMPATIBLES
+                df_compatible = pd.DataFrame(facturas_originales)
+                
+                # Seleccionar solo las columnas que existen en la tabla PostgreSQL
+                columnas_compatibles = [
+                    'numero_factura', 'area_servicio', 'facturador', 'fecha_generacion', 
+                    'eps', 'fecha_hora_entrega', 'tiene_correccion', 'descripcion_devolucion',
+                    'fecha_devolucion_lider', 'revisado', 'factura_original_id', 'estado',
+                    'reemplazada_por_numero_factura', 'estado_auditoria', 'observacion_auditor',
+                    'tipo_error', 'fecha_reemplazo', 'fecha_entrega_radicador', 'lote_carga_masiva'
+                ]
+                
+                # Filtrar columnas (solo las que existen en el DataFrame)
+                columnas_existentes = [col for col in columnas_compatibles if col in df_compatible.columns]
+                df_compatible = df_compatible[columnas_existentes]
+                
+                # Generar CSV
+                csv = df_compatible.to_csv(index=False).encode('utf-8')
+                # ===== FIN NUEVO =====
                 st.download_button(
                     label="📥 Descargar CSV",
                     data=csv,
