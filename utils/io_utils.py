@@ -1,6 +1,6 @@
 # utils/io_utils.py
 import streamlit as st
-import pandas as pd # Necesitarás pandas aquí porque df es un DataFrame
+import pandas as pd
 from backend import database_operations as db_ops
 
 def export_df_to_csv(df):
@@ -10,6 +10,7 @@ def export_df_to_csv(df):
 def generar_reporte_carga_masiva(numero_lote, facturador, eps, area_servicio, dataframe_facturas, fecha_hora_carga, ids_facturas):
     """
     Genera HTML para el reporte de relación de carga masiva
+    Compatible con ambos formatos: CSV original y datos procesados de BD
     """
     html = f"""
     <!DOCTYPE html>
@@ -48,30 +49,44 @@ def generar_reporte_carga_masiva(numero_lote, facturador, eps, area_servicio, da
                     <th>ID Factura</th>
                     <th>Número de Factura</th>
                     <th>Fecha de Generación</th>
-                    <th>Estado Auditoría</th>  <!-- NUEVA COLUMNA -->
+                    <th>Estado Auditoría</th>
                 </tr>
             </thead>
             <tbody>
     """
-    
-    # Obtener los estados de auditoría de la base de datos
+
+    columnas_disponibles = dataframe_facturas.columns.tolist()
+
+    if 'Número de Factura' in columnas_disponibles:
+        columna_numero = 'Número de Factura'
+    elif 'Numero de Factura' in columnas_disponibles:
+        columna_numero = 'Numero de Factura'
+    else:
+        columna_numero = 'numero_factura'
+
+    if 'Fecha Generación' in columnas_disponibles:
+        columna_fecha = 'Fecha Generación'
+    elif 'Fecha de Generacion' in columnas_disponibles:
+        columna_fecha = 'Fecha de Generacion'
+    else:
+        columna_fecha = 'fecha_generacion'
+
     estados_auditoria = []
     for factura_id in ids_facturas:
         factura_data = db_ops.obtener_factura_por_id(factura_id)
         estados_auditoria.append(factura_data['estado_auditoria'] if factura_data else 'N/A')
-    
-    # Agregar filas por cada factura - CON los IDs y estado de auditoría
+
     for i, (_, row) in enumerate(dataframe_facturas.iterrows(), 1):
         html += f"""
                 <tr>
                     <td>{i}</td>
                     <td>{ids_facturas[i-1]}</td>
-                    <td>{row['Numero de Factura']}</td>
-                    <td>{row['Fecha de Generacion']}</td>
-                    <td>{estados_auditoria[i-1]}</td>  <!-- NUEVO DATO -->
+                    <td>{row[columna_numero]}</td>
+                    <td>{row[columna_fecha]}</td>
+                    <td>{estados_auditoria[i-1]}</td>
                 </tr>
         """
-    
+
     html += """
             </tbody>
         </table>

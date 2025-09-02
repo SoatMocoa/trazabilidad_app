@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import datetime, timedelta, date
+from datetime import datetime as dt, timedelta, date
 from backend import database_operations as db_ops
 from backend.database_operations import generar_siguiente_id_lote
 import pandas as pd
@@ -111,56 +112,47 @@ def _process_factura_for_display_df(df_raw):
         lambda x: sumar_dias_habiles(x, 21) if not pd.isnull(x) else None
     )
 
-    # ===== ¡¡CORRECCIÓN DE EMERGENCIA!! =====
     def calcular_dias_para_fila(fecha_limite):
         if pd.isnull(fecha_limite):
             return None
-        
-        # DEBUG: Verificar fechas
+
         print(f"DEBUG: fecha_limite={fecha_limite}, hoy={hoy}")
-        
-        # Convertir a date para el cálculo correcto
+
         try:
             fecha_limite_date = fecha_limite.date() if hasattr(fecha_limite, 'date') else fecha_limite
             hoy_date = hoy.date()
             
             dias = calcular_dias_habiles_entre_fechas(hoy_date, fecha_limite_date)
-            
-            # VERIFICAR SI YA VENCIÓ
+
             if fecha_limite_date < hoy_date:
-                return -abs(dias)  # Forzar negativo
+                return -abs(dias)
             return dias
-            
+
         except Exception as e:
             print(f"ERROR en cálculo: {e}")
             return None
 
     df['Días Restantes'] = df['fecha_limite_liquidacion_obj'].apply(calcular_dias_para_fila)
 
-    # ===== CONDICIONES CORREGIDAS =====
     cond_vencidas = (
         (df['Días Restantes'] < 0) |  # Cualquier valor negativo
         (df['Días Restantes'].astype(str).str.contains('Refacturar', na=False))  # Incluir textos existentes
     )
-    
+
     cond_hoy_vence = (df['Días Restantes'] == 0)
-    
-    # APLICAR "Refacturar" y "Hoy Vence"
+
     df.loc[cond_vencidas, 'Días Restantes'] = "Refacturar"
     df.loc[cond_hoy_vence, 'Días Restantes'] = "Hoy Vence"
-    
-    # FORZAR ESTADO "Vencidas" para facturas vencidas
+
     cond_estado_vencidas = (df['Días Restantes'].isin(["Refacturar", "Hoy Vence"]))
     df.loc[cond_estado_vencidas, 'Estado'] = "Vencidas"
-    # ===== FIN CORRECCIÓN =====
 
-    # ... (el resto de tu código se mantiene IGUAL) ...
     df['Número de Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['num_fact_original_linked'],
         df['numero_factura']
     )
-    
+
     df['Número Reemplazo Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['numero_factura'],
@@ -170,13 +162,13 @@ def _process_factura_for_display_df(df_raw):
             ""
         )
     )
-    
+
     df['Fecha Generación'] = np.where(
         df['factura_original_id'].notnull(),
         df['fecha_gen_original_linked'],
         df['fecha_generacion']
     )
-    
+
     df['Fecha Reemplazo Factura'] = np.where(
         df['factura_original_id'].notnull(),
         df['fecha_generacion'].dt.strftime('%Y-%m-%d'),
@@ -186,10 +178,8 @@ def _process_factura_for_display_df(df_raw):
             ""
         )
     )
-    
+
     df['Estado'] = np.where(df['factura_original_id'].notnull(), "Reemplazada", df['estado'])
-    
-    # Asegurar que las vencidas mantengan su estado
     df.loc[cond_estado_vencidas, 'Estado'] = "Vencidas"
 
     df['Fecha Generación'] = df['Fecha Generación'].dt.strftime('%Y-%m-%d').fillna('')
@@ -255,7 +245,7 @@ def main_app_page():
         st.session_state.user_role = None
         st.rerun()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Ingreso Individual", "Carga Masiva", "Estadísticas", "Auditoría por Lotes"]) # <-- Nueva pestaña
+    tab1, tab2, tab3, tab4 = st.tabs(["Ingreso Individual", "Carga Masiva", "Estadísticas", "Auditoría por Lotes"])
 
     with tab1:
         st.header("Ingreso de Factura Individual")
@@ -385,6 +375,64 @@ def display_bulk_load_section():
     if 'mostrar_reporte' not in st.session_state:
         st.session_state.mostrar_reporte = False
 
+    st.markdown("---")
+    st.subheader("🖨️ Reimprimir Relación por Lote Existente")
+
+    try:
+        lotes_existentes = db_ops.obtener_lotes_unicos()
+    except:
+        lotes_existentes = []
+
+    col_buscar, col_imprimir = st.columns([3, 1])
+    with col_buscar:
+        lote_a_reimprimir = st.selectbox("Seleccione el lote a reimprimir:", 
+                                       options=[""] + lotes_existentes,
+                                       key="select_reimprimir_lote")
+
+    with col_imprimir:
+        st.write("")
+        st.write("")
+        btn_reimprimir = st.button("🖨️ Reimprimir", disabled=not lote_a_reimprimir)
+    from datetime import datetime
+    if btn_reimprimir and lote_a_reimprimir:
+        try:
+            facturas_lote = db_ops.cargar_facturas_por_lote(lote_a_reimprimir)
+
+            if facturas_lote and len(facturas_lote) > 0:
+                primera_factura = facturas_lote[0]
+                facturador = primera_factura.get('facturador', '')
+                eps = primera_factura.get('eps', '')
+                area_servicio = primera_factura.get('area_servicio', '')
+
+                df_lote_procesado = _process_factura_for_display_df(facturas_lote)
+
+                reporte_html = generar_reporte_carga_masiva(
+                    numero_lote=lote_a_reimprimir,
+                    facturador=facturador,
+                    eps=eps,
+                    area_servicio=area_servicio,
+                    dataframe_facturas=df_lote_procesado,
+                    fecha_hora_carga=datetime.now(),
+                    ids_facturas=[f['id'] for f in facturas_lote]
+                )
+
+                st.success(f"✅ Relación del lote {lote_a_reimprimir} generada")
+                st.download_button(
+                    label="📄 Descargar Relación",
+                    data=reporte_html,
+                    file_name=f"relacion_reimpresa_{lote_a_reimprimir}.html",
+                    mime="text/html",
+                    key=f"reimprimir_{lote_a_reimprimir}"
+                )
+            else:
+                st.warning(f"❌ No se encontraron facturas para el lote {lote_a_reimprimir}")
+
+        except Exception as e:
+            st.error(f"Error al reimprimir: {e}")
+
+    st.markdown("---")
+    st.subheader("📤 Carga Masiva Nueva")
+
     with st.form("bulk_load_form"):
         st.write("Por favor, selecciona el Legalizador, EPS y Área de Servicio para todas las facturas del CSV.")
         facturador_bulk = st.selectbox("Legalizador (CSV):", options=[""] + FACTURADORES, key=f"bulk_facturador_selector_{st.session_state.bulk_facturador_key}")
@@ -445,7 +493,6 @@ def display_bulk_load_section():
                 else:
                     estado_auditoria_automatico_masivo = "Pendiente"
 
-                # === NUEVO CÓDIGO CON INDENTACIÓN CORRECTA ===
                 try:
                     factura_id = db_ops.guardar_factura(
                         numero_factura=numero_factura_csv,
@@ -471,7 +518,6 @@ def display_bulk_load_section():
                     skipped_count += 1
                     st.error(f"❌ Fila {index+2}: Error AL INSERTAR la factura **'{numero_factura_csv}'**. Motivo: `{e}`")
                     continue
-                # === FIN NUEVO CÓDIGO ===
 
             if inserted_count > 0:
                 st.success(f"Carga masiva finalizada.\nTotal de filas procesadas: {total_rows}\nFacturas insertadas: {inserted_count}\nFacturas omitidas (duplicadas/errores): {skipped_count}")
@@ -681,7 +727,7 @@ def highlight_rows(row):
         'Observación Auditor'
     ]
     styles_list = [''] * len(row)
-    
+
     base_color = ''
     if row["Estado Auditoria"] == 'Devuelta por Auditor':
         base_color = 'background-color: lightblue'
@@ -728,7 +774,7 @@ def display_invoice_table(user_role):
 
     if (cache_key not in st.session_state or
         st.session_state.get('last_search_tuple') != current_search_tuple):
-        
+
         facturas_raw = get_cached_facturas(search_term=current_search_term,
                                            search_column=db_column_name)
         st.session_state[cache_key] = _process_factura_for_display_df(facturas_raw.copy())
@@ -785,7 +831,7 @@ def display_invoice_table(user_role):
             (df_facturas['Fecha Entrega Radicador'].isna() | (df_facturas['Fecha Entrega Radicador'] == '')),
             'ID'
         ].tolist()
-        
+
         if selectable_ids:
             with st.form("entrega_masiva_form"):
                 selected_ids = st.multiselect(
@@ -793,9 +839,9 @@ def display_invoice_table(user_role):
                     selectable_ids,
                     key="masiva_radicador"
                 )
-                
+
                 submitted = st.form_submit_button("🚚 Entregar al Radicador")
-                
+
                 if submitted and selected_ids:
                     fecha_entrega = datetime.now()
                     entregadas_count = 0
@@ -819,30 +865,23 @@ def display_invoice_table(user_role):
     with col_export:
         if st.button("Exportar a CSV"):
             try:
-                # ===== NUEVO: Exportación compatible =====
-                # Primero obtener los datos ORIGINALES de la BD (no el DataFrame procesado)
-                facturas_originales = get_cached_facturas("", "")  # Obtener datos crudos
-                
-                # Crear DataFrame solo con las columnas COMPATIBLES
+                facturas_originales = get_cached_facturas("", "")
+
                 df_compatible = pd.DataFrame(facturas_originales)
-                
-                # Seleccionar solo las columnas que existen en la tabla PostgreSQL
+
                 columnas_compatibles = [
-                    'numero_factura', 'area_servicio', 'facturador', 'fecha_generacion', 
+                    'id', 'numero_factura', 'area_servicio', 'facturador', 'fecha_generacion', 
                     'eps', 'fecha_hora_entrega', 'tiene_correccion', 'descripcion_devolucion',
                     'fecha_devolucion_lider', 'revisado', 'factura_original_id', 'estado',
                     'reemplazada_por_numero_factura', 'estado_auditoria', 'observacion_auditor',
                     'tipo_error', 'fecha_reemplazo', 'fecha_entrega_radicador', 'lote_carga_masiva'
                 ]
-                
-                # Filtrar columnas (solo las que existen en el DataFrame)
+
                 columnas_existentes = [col for col in columnas_compatibles if col in df_compatible.columns]
                 df_compatible = df_compatible[columnas_existentes]
-                
-                # Generar CSV
+
                 csv = df_compatible.to_csv(index=False).encode('utf-8')
-                # ===== FIN NUEVO =====
-                
+
                 st.download_button(
                     label="📥 Descargar CSV",
                     data=csv,
@@ -1000,7 +1039,7 @@ def guardar_factura_action(facturador, eps, numero_factura, fecha_generacion_str
         fecha_hora_entrega=fecha_hora_entrega,
         estado_auditoria=estado_auditoria_automatico
     )
-    
+
     if factura_id:
         if area_servicio == "SOAT":
             db_ops.guardar_detalles_soat(factura_id, fecha_generacion_db)

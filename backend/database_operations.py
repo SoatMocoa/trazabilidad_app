@@ -142,12 +142,11 @@ def guardar_factura(numero_factura, area_servicio, facturador, fecha_generacion,
                 logging.info(f"Factura '{numero_factura}' guardada con ID: {factura_id}. Estado: {estado_auditoria}, Lote: {lote_carga_masiva}")
                 return factura_id
     except errors.UniqueViolation as e:
-        # ¡AHORA LANZA LA EXCEPCIÓN en lugar de retornar None!
         logging.warning(f"Intento de guardar factura duplicada. La combinación (Número de Factura: '{numero_factura}', Legalizador: '{facturador}', EPS: '{eps}', Área de Servicio: '{area_servicio}') ya existe.")
-        raise e  # ← Esto propaga el error hacia arriba
+        raise e 
     except Error as e:
         logging.error(f"Error al guardar factura '{numero_factura}': {e}")
-        raise e  # ← Esto propaga el error hacia arriba
+        raise e
 
 def guardar_detalles_soat(factura_id, fecha_generacion_soat):
     try:
@@ -295,12 +294,9 @@ def actualizar_fecha_entrega_radicador(factura_id, fecha_entrega):
         with DatabaseConnection() as conn:
             if conn is None: return False
             with conn.cursor() as cursor:
-                # Lógica MEJORADA: El estado cambia BASADO EN LA ACCIÓN (fecha_entrega), no en el estado anterior
                 if fecha_entrega is not None:
-                    # Si se está ENTREGANDO (marcando el checkbox), cambiar a "En Radicador"
                     new_estado_auditoria = "En Radicador"
                 else:
-                    # Si se está QUITANDO la entrega (desmarcando el checkbox), volver a "Lista para Radicar"
                     new_estado_auditoria = "Lista para Radicar"
                 
                 cursor.execute("""
@@ -615,10 +611,6 @@ def generar_siguiente_id_lote():
     return id_formateado
 
 def reparar_secuencia_ids():
-    """
-    Repara la secuencia de IDs automáticos para la tabla facturas.
-    Esto evita errores de 'duplicate key' en la columna id.
-    """
     try:
         with DatabaseConnection() as conn:
             if conn is None: return
@@ -630,3 +622,24 @@ def reparar_secuencia_ids():
                 logging.info("Secuencia de IDs de la tabla facturas reparada.")
     except Error as e:
         logging.error(f"Error al reparar la secuencia de IDs: {e}")
+
+def obtener_datos_carga_por_lote(numero_lote):
+    try:
+        with DatabaseConnection() as conn:
+            if conn is None: return None
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM facturas 
+                    WHERE lote_carga_masiva = %s 
+                    ORDER BY id;
+                """, (numero_lote,))
+                
+                column_names = [desc[0] for desc in cursor.description]
+                facturas = cursor.fetchall()
+                
+                if facturas:
+                    return [dict(zip(column_names, row)) for row in facturas]
+                return None
+    except Error as e:
+        logging.error(f"Error al obtener datos del lote {numero_lote}: {e}")
+        return None
